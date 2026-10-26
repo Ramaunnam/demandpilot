@@ -1,0 +1,195 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: 244 247 250;
+    --surface: 255 255 255;
+    --surface2: 248 250 252;
+    --line: 216 224 234;
+    --line-strong: 188 200 216;
+    --fg: 16 28 42;
+    --muted: 92 110 132;
+
+    --primary: 20 57 92;
+    --primary-soft: 230 239 247;
+    --on-primary: 255 255 255;
+
+    --success: 17 112 70;
+    --success-soft: 226 245 236;
+    --warning: 168 106 6;
+    --warning-soft: 253 243 223;
+    --danger: 180 42 32;
+    --danger-soft: 253 233 230;
+    --info: 26 95 152;
+    --info-soft: 229 240 250;
+    --ai: 103 68 196;
+    --ai-soft: 238 233 252;
+
+    --shadow-sm: 0 1px 2px rgb(15 30 46 / .06);
+    --shadow-md: 0 4px 14px rgb(15 30 46 / .08);
+    --shadow-lg: 0 18px 48px rgb(15 30 46 / .16);
+  }
+
+  .dark {
+    --bg: 11 20 32;
+    --surface: 18 29 44;
+    --surface2: 23 36 53;
+    --line: 36 54 75;
+    --line-strong: 54 80 107;
+    --fg: 226 234 243;
+    --muted: 149 166 186;
+
+    --primary: 92 158 222;
+    --primary-soft: 21 48 74;
+    --on-primary: 7 22 36;
+
+    --success: 74 196 140;
+    --success-soft: 14 48 34;
+    --warning: 232 173 70;
+    --warning-soft: 56 41 14;
+    --danger: 242 122 112;
+    --danger-soft: 53 23 21;
+    --info: 96 172 232;
+    --info-soft: 14 42 65;
+    --ai: 174 144 248;
+    --ai-soft: 36 26 64;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / .4);
+    --shadow-md: 0 6px 18px rgb(0 0 0 / .45);
+    --shadow-lg: 0 24px 60px rgb(0 0 0 / .6);
+  }
+
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-bg text-fg antialiased;
+    font-size: 13px;
+  }
+  /* numbers line up everywhere */
+  .num { font-variant-numeric: tabular-nums; }
+
+  *:focus-visible { @apply outline-none ring-2 ring-primary ring-offset-1 ring-offset-bg rounded; }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { @apply bg-line rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-line-strong; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer components {
+  /* ---- surfaces ---------------------------------------------------- */
+  .card { @apply bg-surface border border-line rounded-xl shadow-sm; }
+  .pad  { @apply p-3.5; }
+
+  /* ---- type --------------------------------------------------------- */
+  .eyebrow { @apply text-2xs font-bold uppercase tracking-[.08em] text-muted; }
+  .h1 { @apply text-xl font-bold tracking-tight; }
+  .h2 { @apply text-md font-semibold; }
+  .sub { @apply text-sm text-muted; }
+
+  /* ---- buttons ------------------------------------------------------ */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg font-medium
+           transition-colors whitespace-nowrap disabled:opacity-45 disabled:pointer-events-none;
+  }
+  .btn-xs { @apply h-7 px-2 text-xs; }
+  .btn-sm { @apply h-8 px-2.5 text-sm; }
+  .btn-md { @apply h-9 px-3.5 text-base; }
+  .btn-lg { @apply h-11 px-5 text-md; }
+  .btn-primary { @apply bg-primary text-primary-fg hover:opacity-90; }
+  .btn-soft    { @apply bg-primary-soft text-primary hover:brightness-95; }
+  .btn-outline { @apply border border-line bg-surface hover:bg-surface2; }
+  .btn-ghost   { @apply text-muted hover:bg-surface2 hover:text-fg; }
+  .btn-danger  { @apply bg-danger text-white hover:opacity-90; }
+
+  /* ---- inputs ------------------------------------------------------- */
+  .input {
+    @apply h-8 w-full rounded-lg border border-line bg-surface px-2.5 text-base
+           placeholder:text-muted/70 focus:border-primary;
+  }
+  .lbl { @apply block text-2xs font-semibold uppercase tracking-wide text-muted mb-1; }
+
+  /* ---- chips -------------------------------------------------------- */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold
+           border whitespace-nowrap;
+  }
+  .chip-neutral { @apply bg-surface2 text-muted border-line; }
+  .chip-primary { @apply bg-primary-soft text-primary border-primary/20; }
+  .chip-success { @apply bg-success-soft text-success border-success/25; }
+  .chip-warning { @apply bg-warning-soft text-warning border-warning/25; }
+  .chip-danger  { @apply bg-danger-soft text-danger border-danger/25; }
+  .chip-info    { @apply bg-info-soft text-info border-info/25; }
+  .chip-ai      { @apply bg-ai-soft text-ai border-ai/25; }
+
+  /* ---- tables ------------------------------------------------------- */
+  .th {
+    @apply sticky top-0 z-10 bg-surface2 px-2.5 py-1.5 text-left text-2xs font-bold
+           uppercase tracking-wide text-muted border-b border-line;
+  }
+  .td { @apply px-2.5 py-1.5 text-base border-b border-line/70; }
+  .tr { @apply hover:bg-primary-soft/40 transition-colors; }
+
+  /* ---- misc --------------------------------------------------------- */
+  .link { @apply text-primary hover:underline underline-offset-2 cursor-pointer; }
+  .skel { @apply relative overflow-hidden bg-surface2 rounded; }
+  .skel::after {
+    content: ''; @apply absolute inset-0 -translate-x-full animate-shimmer;
+    background-image: linear-gradient(90deg, transparent, rgb(var(--line) / .55), transparent);
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Chrome is furniture, not content.
+
+   Double-clicking a tab or a table header used to drag a blue selection across
+   the whole page, which reads as a broken web page rather than an application.
+   Data stays selectable so numbers can still be copied out.
+--------------------------------------------------------------------------- */
+.select-none,
+.th,
+.btn,
+.chip,
+.eyebrow,
+nav,
+header,
+[role="tablist"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Print — used by the Proof page.
+
+   The old rule hid anything marked .no-print and stopped there, so a printout
+   carried the tab bar, lost the chart below the fold and spilled over several
+   pages. This keeps the evidence and drops the furniture.
+--------------------------------------------------------------------------- */
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+
+  .no-print,
+  nav,
+  header,
+  aside,
+  [role="tablist"],
+  .btn { display: none !important; }
+
+  html, body { background: #fff !important; }
+  * { color: #000 !important; box-shadow: none !important; }
+
+  .card {
+    box-shadow: none;
+    break-inside: avoid;
+    border: 1px solid #ccc !important;
+    background: #fff !important;
+  }
+
+  /* Recharts measures a container; give it a fixed printable box. */
+  .recharts-wrapper, .recharts-surface { max-width: 100% !important; }
+
+  main { padding: 0 !important; max-width: none !important; }
+  table { font-size: 10px; }
+}
