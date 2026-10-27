@@ -57,6 +57,8 @@ export interface WeekBrief {
   tightest: MaterialView | null
   /** Past its date. */
   overdue: number
+  /** Due today, and not already past. */
+  today: number
   /** Past its date or due today — what a person has to look at before going home. */
   overdueToday: number
 }
@@ -111,7 +113,7 @@ export function weekBrief(ds: Dataset, r: PlanningResult, queue: WorkbenchItem[]
   ]
 
   return {
-    headline, verdict, facts, firstToDo, tightest, overdue,
+    headline, verdict, facts, firstToDo, tightest, overdue, today,
     overdueToday: queue.filter(w => needsActionToday(w.dueInDays)).length,
   }
 }

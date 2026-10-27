@@ -954,16 +954,20 @@ anything.
 
 **Header:** "240 products · 40 materials · 4 regions", plus an at-risk chip.
 
-**6 tiles**, each a link or a jump to the tab that explains it:
+**5 tiles**, each a link or a jump to the tab that explains it:
 
 | Tile | Value | Sub | Goes to |
 |---|---|---|---|
 | Accuracy | `forecastAccuracyPct` | delta vs the old method | `/forecast?tab=accuracy` |
 | Anomalies | `openAnomalies` *(shifts)* | `N series behind them` | `/anomalies` |
-| Needs a person | overdue + due today | `N overdue of M waiting` | Today tab |
 | Stock value | `inventoryValueINR` | `N days of cover` | Cash & cover tab |
 | Excess | `excessValueINR` | `N materials · releasable` | Cash & cover tab |
 | Service | `serviceLevelPct` | "demand met, by value" | Vs the old way tab |
+
+There were six tiles. A "Needs a person" one read `8` over `2 overdue of 18 waiting` — a sub-line
+explaining two numbers, neither of them the one on the tile. It was reworded and then removed: the
+figure belongs beside the sentence that explains it, not alone above two others, and it is the first of
+the three facts in the lead panel below. Five tiles, so the row fills at every breakpoint.
 
 **"This week, in one line"** — the lead panel, from `weekBrief()`. A headline stating the position
 (decisions waiting, how many past their date, materials at risk and overstocked, forecast against the
@@ -1013,7 +1017,7 @@ because removing a panel is also how a screen quietly stops saying how much is o
 - **The queue** — filter chips for every queue, then the item rows in `rankQueue()` order (previously
   engine order, which could differ from Health's). Ten at a time, with "Show all".
 - **By deadline** — "When each decision is due" (six buckets: Overdue, Today, 2–3 days, This week,
-  Next week, Later) and "What the queue is made of" (stacked per queue, Critical/High split from
+  Next week, Later — **disjoint**, see below) and "What the queue is made of" (stacked per queue, Critical/High split from
   Medium/Low), then the full "Needs a person today" list.
 - **Same subject** — `repeatSubjects()`. One material generating an Order-now, an Expedite and an
   Unusual-demand entry is three rows but one conversation with one supplier. Each roll-up shows the
@@ -1027,6 +1031,21 @@ because removing a panel is also how a screen quietly stops saying how much is o
 **The Why drawer** shows the recommended action, the reason, the weighted signal bars, a 3-up row of
 queue/due/value, and — when the subject has other items waiting — an "Also waiting on …" panel that
 switches the drawer straight to them.
+
+#### The due buckets had to be made disjoint
+
+`dueInDays` comes from `orderByDays`, which is fractional — the molybdenum recommendation sits at
+−37.2 days. The buckets rounded: "Today" was `Math.round(d) === 0`, so an item at −0.4 was **both**
+Overdue and Today, and one at +0.3 was both Today and "2–3 days". Two consequences, both live:
+
+- the bars in "When each decision is due" could total more than the queue holds;
+- Health counted `d <= 0` while Exceptions added `overdue + today`, so the same claim on two screens
+  could come out as different numbers.
+
+Today's data happens to carry whole days in those buckets, so neither had surfaced. The predicates are
+now `isOverdue: d < 0`, `isDueToday: 0 <= d < 1`, `needsActionToday: d < 1`, and the buckets follow the
+same boundaries. Tests assert that every item — and a list of fractional edge values — falls in exactly
+one bucket, that the bars sum to the queue length, and that the two screens agree item for item.
 
 ### 9.3 Forecast (`/forecast`) — capability K1
 
@@ -1438,7 +1457,7 @@ Steps 3 through 8 are all *computed*. The only things written by hand are the si
 
 ## 14. Tests
 
-**220 tests across 9 files, all passing** (~75 s, most of it jsdom).
+**222 tests across 9 files, all passing** (~75 s, most of it jsdom).
 
 ### `engine/engine.test.ts` — 34 tests
 
@@ -1505,7 +1524,7 @@ the exception queue matches its own filters, and `kpis.serviceLevelPct` equals
 What-if levers and costed options; then every sidebar destination against the routes `App.tsx` actually
 serves, so a screen cannot be moved without its links being updated.
 
-### `screens/render.test.tsx` — 90 tests
+### `screens/render.test.tsx` — 92 tests
 
 Mounts **all 14 screens** in jsdom and asserts they paint with the right number of sized charts and
 real drawn geometry, then re-mounts the heaviest four **six weeks advanced**. Also: no screen renders

@@ -45,14 +45,24 @@ export interface ApprovalRow {
  * labelled on `<= 0`, so everything due today vanished between the two.
  */
 export const isOverdue = (dueInDays: number) => dueInDays < 0
-export const isDueToday = (dueInDays: number) => Math.round(dueInDays) === 0
-/** Needs a person today: overdue or due today. */
-export const needsActionToday = (dueInDays: number) => dueInDays <= 0
+export const isDueToday = (dueInDays: number) => dueInDays >= 0 && dueInDays < 1
+/** Needs a person today: overdue or due today. Exactly those two, no gap, no overlap. */
+export const needsActionToday = (dueInDays: number) => dueInDays < 1
 
+/**
+ * Six buckets that do not overlap and leave nothing out.
+ *
+ * `dueInDays` comes from `orderByDays`, which is fractional — the moly
+ * recommendation sits at −37.2 days. The old set rounded: "Today" was
+ * `Math.round(d) === 0`, so an item at −0.4 was *both* Overdue and Today, and
+ * one at +0.3 was both Today and "2-3 days". The bars could therefore add up to
+ * more than the queue holds, and Health counting `d <= 0` could disagree with
+ * Exceptions counting `overdue + today`.
+ */
 export const DUE_BUCKETS: { name: string; has: (d: number) => boolean }[] = [
   { name: 'Overdue', has: d => d < 0 },
-  { name: 'Today', has: d => Math.round(d) === 0 },
-  { name: '2-3 days', has: d => d > 0 && d < 4 },
+  { name: 'Today', has: d => d >= 0 && d < 1 },
+  { name: '2-3 days', has: d => d >= 1 && d < 4 },
   { name: 'This week', has: d => d >= 4 && d < 8 },
   { name: 'Next week', has: d => d >= 8 && d < 15 },
   { name: 'Later', has: d => d >= 15 },

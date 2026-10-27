@@ -8,6 +8,10 @@
  * that follow from it — what is coming, where the money is, and whether any of
  * this beats the old way.
  *
+ * The queue count is deliberately not a tile. It lives in the lead panel, where
+ * "8" sits next to the sentence that explains it, rather than alone above a
+ * sub-line listing two other numbers.
+ *
  * Nothing here computes its own figures. `weekBrief`, `stockLadder`,
  * `cashPosition` and `scorecard` all derive from the same `PlanningResult` and
  * the same exception list the sidebar badge reads, which is why the rail, the
@@ -131,15 +135,12 @@ export default function Health() {
         </Chip>}
       />
 
-      <Tiles>
+      <Tiles cols={5}>
         <Tile k="Accuracy" v={fmtPct(k.forecastAccuracyPct, 1)} to="/forecast?tab=accuracy"
           delta={+(k.forecastAccuracyPct - k.spreadsheetAccuracyPct).toFixed(1)} deltaGood="up"
           sub={`vs ${fmtPct(k.spreadsheetAccuracyPct, 0)} old`} tone={k.forecastAccuracyPct >= 85 ? 'success' : 'warning'} />
         <Tile k="Anomalies" v={fmtNum(k.openAnomalies)} to="/anomalies"
           sub={`${k.openAnomalySeries} series behind them`} tone={k.highAnomalies ? 'warning' : 'success'} />
-        <Tile k="Needs a person" v={fmtNum(brief.overdueToday)} onClick={() => setTab('today')}
-          sub={`${brief.overdue} overdue of ${queue.length} waiting`}
-          tone={brief.overdue ? 'danger' : brief.overdueToday ? 'warning' : 'success'} />
         <Tile k="Stock value" v={fmtINR(k.inventoryValueINR)} onClick={() => setTab('cash')}
           sub={`${k.daysOfInventory.toFixed(0)} days of cover`} />
         <Tile k="Excess" v={fmtINR(k.excessValueINR)} onClick={() => setTab('cash')}

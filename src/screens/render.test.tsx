@@ -796,6 +796,35 @@ describe('the summary screens', () => {
 
   const QUEUE = S.selectExceptions(RESULT, [], S.selectDecidedRecIds([], {}))
 
+  it('the due buckets neither overlap nor lose an item', async () => {
+    // dueInDays is fractional. The buckets used to round, so an item at -0.4
+    // landed in both Overdue and Today and the bars could total more than the
+    // queue holds. Every item must fall in exactly one.
+    for (const w of QUEUE) {
+      const hit = S.DUE_BUCKETS.filter(b => b.has(w.dueInDays))
+      expect(hit.map(b => b.name), `${w.subject} at d=${w.dueInDays}`).toHaveLength(1)
+    }
+    for (const d of [-2, -0.4, -0.001, 0, 0.3, 0.999, 1, 3.9, 4, 7.9, 8, 14.9, 15, 400]) {
+      expect(S.DUE_BUCKETS.filter(b => b.has(d)).map(b => b.name), `d=${d}`).toHaveLength(1)
+    }
+    expect(S.selectDueBuckets(QUEUE).reduce((a, b) => a + b.n, 0)).toBe(QUEUE.length)
+  })
+
+  it('Health and Exceptions count "needs a person today" the same way', async () => {
+    // Health reads one predicate and Exceptions adds two others. They have to
+    // come out equal for every item, including fractional days.
+    const wb = weekBrief(ds, RESULT, QUEUE)
+    const qb = queueBrief(QUEUE)
+    expect(wb.overdueToday).toBe(qb.overdue + qb.today)
+    expect(wb.overdue).toBe(qb.overdue)
+    expect(wb.today).toBe(qb.today)
+    // The tile was removed; the figure survives in the lead panel, where it sits
+    // beside the sentence that explains it.
+    const txt = (await render(<Health />)).textContent ?? ''
+    expect(txt).toContain('Needs a person today')
+    expect(txt).toContain(`${wb.overdue} overdue · ${wb.today} due today · ${QUEUE.length} in total`)
+  })
+
   it('Health leads with the week in a sentence, naming what to do first', async () => {
     const brief = weekBrief(ds, RESULT, QUEUE)
     const txt = (await render(<Health />)).textContent ?? ''
