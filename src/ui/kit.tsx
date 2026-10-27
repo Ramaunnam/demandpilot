@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { X, ArrowUpRight, ArrowDownRight, Minus, ChevronRight, Info } from 'lucide-react'
 import { GLOSSARY } from '@/content/glossary'
+import { Wordmark } from './Logo'
 import { usePalette } from './colors'
 
 export type Tone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'ai'
@@ -66,6 +67,21 @@ export function LVRow({ items, cols = 4 }: {
     <div className={`grid gap-3 rounded-lg border border-line bg-surface2 px-3 py-2`}
       style={{ gridTemplateColumns: `repeat(${Math.min(cols, items.length)}, minmax(0,1fr))` }}>
       {items.map(i => <LV key={i.k} {...i} />)}
+    </div>
+  )
+}
+
+/**
+ * One supporting number beside a narrative line. Smaller than a Tile, which is
+ * a headline; a row of three of these is what a lead panel says after it has
+ * made its point.
+ */
+export function Fact({ k, v, sub }: { k: string; v: ReactNode; sub?: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-line bg-surface2 px-2.5 py-1.5 min-w-0">
+      <div className="text-2xs text-muted truncate">{k}</div>
+      <div className="text-base font-semibold num truncate">{v}</div>
+      {sub && <div className="text-2xs text-muted line-clamp-2">{sub}</div>}
     </div>
   )
 }
@@ -196,7 +212,7 @@ export function Panel({ title, right, children, className = '', pad = true, note
   title?: string; right?: ReactNode; children: ReactNode; className?: string; pad?: boolean; note?: string
 }) {
   return (
-    <section className={`card ${pad ? 'pad' : ''} ${className}`}>
+    <section className={`card min-w-0 ${pad ? 'pad' : ''} ${className}`}>
       {(title || right) && (
         <header className="flex items-center justify-between gap-2 mb-2.5">
           {title && <h3 className="h2">{title}</h3>}
@@ -363,7 +379,7 @@ export function Loading({ stage, pct }: { stage: string; pct: number }) {
   return (
     <div className="grid place-items-center min-h-[70vh]">
       <div className="w-full max-w-xs text-center">
-        <div className="w-10 h-10 rounded-xl bg-primary text-primary-fg grid place-items-center mx-auto mb-3 font-bold">DP</div>
+        <div className="grid place-items-center mb-3"><Wordmark height={44} /></div>
         <p className="text-md font-semibold">Running the plan</p>
         <p className="sub mb-3">{stage}</p>
         <Bar pct={pct} />

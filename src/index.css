@@ -193,3 +193,11 @@ header,
   main { padding: 0 !important; max-width: none !important; }
   table { font-size: 10px; }
 }
+
+/* Grid columns may shrink below their content's first-paint width. Without
+   this, a chart's 560 px first paint (or a long word) stretched its column and
+   pushed the whole page past a phone screen. Wide content still scrolls in its
+   own .overflow-auto box. */
+@layer base {
+  .grid > * { min-width: 0; }
+}

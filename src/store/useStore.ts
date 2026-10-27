@@ -16,6 +16,28 @@ export type Role = 'Planner' | 'Buyer' | 'Manager'
 
 export interface Toast { id: number; text: string; kind: 'good' | 'info' | 'warn' | 'risk' }
 
+/**
+ * A file a planner dropped on the Manual upload feed.
+ *
+ * Anything is accepted, but only a tabular file can become demand history — a
+ * photo of a delivery note or a supplier's PDF quote is evidence attached to the
+ * feed, not something the models can be fitted on. `parsed` is which of the two
+ * it turned out to be, so the UI never has to imply a PDF moved the forecast.
+ */
+export interface UploadedFile {
+  id: string
+  name: string
+  /** MIME type as the browser reported it, or '' when it could not tell. */
+  mime: string
+  sizeBytes: number
+  at: string
+  parsed: boolean
+  /** Series found, when it was tabular. */
+  seriesCount: number
+  /** Why it was not parsed, when it was not. */
+  note: string
+}
+
 export interface ApprovedOrder {
   recommendationId: string
   poId: string
@@ -55,6 +77,7 @@ interface State {
   planHistory: PlanHistoryEntry[]
   committedPlanId: string | null
   toasts: Toast[]
+  uploads: UploadedFile[]
 
   // actions
   init: () => void
@@ -86,6 +109,8 @@ interface State {
   revertHistory: (id: string) => void
   toast: (text: string, kind?: Toast['kind']) => void
   dropToast: (id: number) => void
+  addUpload: (f: Omit<UploadedFile, 'id' | 'at'>) => void
+  removeUpload: (id: string) => void
 }
 
 let worker: Worker | null = null
@@ -117,7 +142,8 @@ export const useStore = create<State>((set, get) => ({
   role: 'Planner',
   dark: readDark(),
   presenter: false,
-  sidebarOpen: true,
+  // Collapsed on phones and small tablets: open, it took half a 400 px screen.
+  sidebarOpen: typeof window === 'undefined' || window.innerWidth >= 1024,
   commandOpen: false,
   tourStep: null,
 
@@ -131,6 +157,7 @@ export const useStore = create<State>((set, get) => ({
   planHistory: getDataset().planHistory,
   committedPlanId: null,
   toasts: [],
+  uploads: [],
 
   init: () => {
     if (worker) return
@@ -214,7 +241,7 @@ export const useStore = create<State>((set, get) => ({
     set({
       weeksAdvanced: 0, overrides: [], anomalyResolutions: {}, approvals: [],
       rejected: {}, sentToBuyer: {}, dismissed: [], committedPlanId: null,
-      settings: { ...DEFAULT_SETTINGS }, planHistory: getDataset().planHistory,
+      settings: { ...DEFAULT_SETTINGS }, planHistory: getDataset().planHistory, uploads: [],
     })
     get().rerun()
     get().toast('Demo reset to the starting position.', 'good')
@@ -370,6 +397,11 @@ export const useStore = create<State>((set, get) => ({
     setTimeout(() => get().dropToast(id), 4200)
   },
   dropToast: id => set(s => ({ toasts: s.toasts.filter(t => t.id !== id) })),
+
+  addUpload: f => set(s => ({
+    uploads: [{ ...f, id: `UP-${Date.now()}-${s.uploads.length}`, at: new Date().toISOString() }, ...s.uploads],
+  })),
+  removeUpload: id => set(s => ({ uploads: s.uploads.filter(u => u.id !== id) })),
 }))
 
 /** Convenience selectors used all over the UI. */

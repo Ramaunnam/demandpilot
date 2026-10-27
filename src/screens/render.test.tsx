@@ -14,6 +14,9 @@ import { useStore } from '@/store/useStore'
 import { runPlanning, DEFAULT_SETTINGS } from '@/engine'
 import { buildDataset, STORY } from '@/data/generate'
 import * as S from '@/engine/selectors'
+import { fmtNum } from '@/lib/format'
+import { weekBrief, queueBrief, rankQueue, repeatSubjects } from '@/engine/briefing'
+import { ALERT_RULES } from '@/content/alerts'
 
 import Health from './Health'
 import Exceptions from './Exceptions'
@@ -25,6 +28,7 @@ import Plan from './Plan'
 import Buy from './Buy'
 import Orders from './Orders'
 import Simulate from './Simulate'
+import Connected from './Connected'
 import Proof from './Proof'
 import Setup from './Setup'
 
@@ -91,7 +95,10 @@ describe('every screen renders', () => {
   // row opened. Setup is a settings form; its chart lives on the Data tab.
   const screens: [string, React.ReactElement, number][] = [
     ['Health', <Health />, 2],
-    ['Exceptions', <Exceptions />, 2],
+    // Exceptions opens on the queue itself — a list, deliberately with no
+    // chart on it. Its two charts are on the By-deadline tab, and the tab walk
+    // in 'the summary screens' covers them.
+    ['Exceptions', <Exceptions />, 0],
     ['Forecast', <Forecast />, 1],
     ['Signals', <Signals />, 1],
     ['Anomalies', <Anomalies />, 1],
@@ -103,6 +110,9 @@ describe('every screen renders', () => {
     // plotted a 0-100 score, a count and a number of days on one axis. It is
     // before/after delta cards now. Its Cash tab still charts.
     ['Simulate', <Simulate />, 0],
+    // Connected systems draws its own sparklines rather than Recharts ones:
+    // a twelve-point sync duration does not need an axis.
+    ['Connected', <Connected />, 0],
     ['Proof', <Proof />, 1],
     ['Setup', <Setup />, 0],
   ]
@@ -638,12 +648,252 @@ describe('recipe tab', () => {
  * application look unfinished: a number that came out undefined, a count of
  * 855.7 physical objects, a cover figure in five digits.
  */
+/**
+ * Connected systems.
+ *
+ * The screen's whole claim is that its counts are the same ones the rest of the
+ * app computes on, so the test asserts the dataset's own figures appear rather
+ * than checking that the page is non-empty.
+ */
+describe('connected systems', () => {
+  /**
+   * Nothing on this screen may look clickable and do nothing.
+   *
+   * Three things did. The "Send" button was disabled in the default Planner
+   * role, so the one obvious control on the panel was dead on arrival; the
+   * queued rows were plain divs; and three of the six chain boxes carried the
+   * hover styling of a link without being one.
+   */
+  describe('every control does something', () => {
+    const clickText = async (c: HTMLElement, startsWith: string) => {
+      const b = [...c.querySelectorAll('button')]
+        .find(x => (x.textContent ?? '').trim().startsWith(startsWith))
+      expect(b, `no button starting "${startsWith}"`).toBeTruthy()
+      expect(b!.disabled, `"${startsWith}" is disabled`).toBe(false)
+      await act(async () => { b!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+      await act(async () => { await new Promise(r => setTimeout(r, 10)) })
+      return b!
+    }
+
+    it('offers the manual feed its upload, not a dead sync button', async () => {
+      const c = await render(<Connected />)
+      const txt = c.textContent ?? ''
+      // It has no schedule, so it is "on demand" rather than switched off.
+      expect(txt).toContain('Manual upload')
+      expect(txt).toContain('On demand')
+      expect(txt).toContain('Upload a CSV')
+      expect(txt).toContain('runs when you upload')
+
+      await clickText(c, 'Manual upload')
+      const open = c.textContent ?? ''
+      expect(open).toContain('None — on demand')
+      // Nothing has been uploaded in a fresh session, so there is no last upload.
+      expect(open).toContain('never')
+      // No sync or pause: there is nothing to sync, and nothing to pause.
+      for (const label of ['Sync now', 'Pause', 'Retry connection']) {
+        expect([...c.querySelectorAll('button')].some(b => (b.textContent ?? '').trim().startsWith(label)),
+          `manual feed should not offer "${label}"`).toBe(false)
+      }
+      // The upload is a real link to the uploader the app already has.
+      const link = [...c.querySelectorAll('a')].find(a => (a.textContent ?? '').includes('Upload a CSV'))
+      expect(link, 'no upload link in the drawer').toBeTruthy()
+      expect(link!.getAttribute('href')).toContain('tab=upload')
+    })
+
+    it('the counts do not treat an on-demand feed as a broken one', async () => {
+      const txt = (await render(<Connected />)).textContent ?? ''
+      // 8 scheduled feeds, 1 on demand — not "9, one of them paused".
+      expect(txt).toContain('scheduled feeds')
+      expect(txt).toContain('1 on demand')
+    })
+
+    it('leaves no chain box that looks clickable but is not', async () => {
+      const c = await render(<Connected />)
+      const chain = [...c.querySelectorAll('a, button')]
+        .filter(el => /hover:border-primary/.test(el.querySelector('div')?.className ?? ''))
+      // Six stages, every one of them either a link or a button.
+      expect(chain.length).toBeGreaterThanOrEqual(6)
+      for (const el of chain) {
+        expect(['A', 'BUTTON']).toContain(el.tagName)
+        if (el.tagName === 'BUTTON') expect((el as HTMLButtonElement).disabled).toBe(false)
+      }
+    })
+  })
+
+  it('reads its record counts off the dataset rather than restating them', async () => {
+    const bomLines = Object.values(ds.bom).reduce((n, a) => n + a.length, 0)
+    const txt = (await render(<Connected />)).textContent ?? ''
+    expect(txt).toContain('SAP S/4HANA')
+    expect(txt).toContain(fmtNum(ds.skus.length))
+    expect(txt).toContain(fmtNum(bomLines))
+    expect(txt).toContain(fmtNum(ds.orders.length))
+    expect(txt).toContain(String(ds.materials.length))
+  })
+
+  it('no longer carries a write-back queue', async () => {
+    const txt = (await render(<Connected />)).textContent ?? ''
+    expect(txt).not.toContain('Waiting to go out')
+    // The outbound systems are still described — removing the queue must not
+    // remove the fact that this app writes anywhere.
+    expect(txt).toContain('Writes out')
+    expect(txt).toContain('Write back')
+  })
+
+  it('does not hide a feed that has gone stale', async () => {
+    const txt = (await render(<Connected />)).textContent ?? ''
+    expect(txt).toContain('Plant MES')
+    expect(txt).toContain('Degraded')
+    expect(txt).toContain('needs attention')
+    // A failed read stays on the log. A log that only shows success is not one.
+    expect(txt).toContain('Failed')
+  })
+
+})
+
+describe('settings', () => {
+  it('lands on the alert rules when a link asks for them', async () => {
+    // Connected systems links here from every alert. It used to drop you on
+    // Parameters, which is not where the rules are.
+    const txt = (await render(<Setup />, '/setup?tab=alerts')).textContent ?? ''
+    for (const rule of ALERT_RULES) expect(txt, `rule missing: ${rule.name}`).toContain(rule.name)
+    expect(txt).toContain('Severity sets the channel')
+  })
+
+  it('has a working uploader where Connected systems says it does', async () => {
+    const c = await render(<Setup />, '/setup?tab=upload')
+    const txt = c.textContent ?? ''
+    expect(txt).toContain('Upload a file')
+    const input = c.querySelector('input[type="file"]') as HTMLInputElement | null
+    expect(input, 'no file input on the upload tab').toBeTruthy()
+    // Any type is accepted. An `accept` filter here is what stopped a PDF, a
+    // photo or a video from ever reaching the feed.
+    expect(input!.getAttribute('accept'), 'the uploader is filtered again').toBeNull()
+    expect(input!.multiple).toBe(true)
+    // And it says plainly which of them can move the forecast.
+    expect(txt).toContain('read as demand history')
+    expect(txt).toContain('attached')
+  })
+
+  it('still opens on parameters with no tab asked for', async () => {
+    const txt = (await render(<Setup />, '/setup')).textContent ?? ''
+    expect(txt).not.toContain('Severity sets the channel')
+  })
+})
+
+describe('the summary screens', () => {
+  /** Click a Tabs button by its label, matched on the Tabs button class. */
+  async function clickTab(c: HTMLElement, label: string) {
+    const btn = [...c.querySelectorAll('button')]
+      .filter(b => b.className.includes('h-7 rounded-md'))
+      .find(b => (b.textContent ?? '').trim().startsWith(label))
+    expect(btn, `no tab labelled "${label}"`).toBeTruthy()
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    // ResponsiveContainer measures, then redraws. Let that settle.
+    await act(async () => { await new Promise(r => setTimeout(r, 10)) })
+  }
+
+  const QUEUE = S.selectExceptions(RESULT, [], S.selectDecidedRecIds([], {}))
+
+  it('Health leads with the week in a sentence, naming what to do first', async () => {
+    const brief = weekBrief(ds, RESULT, QUEUE)
+    const txt = (await render(<Health />)).textContent ?? ''
+    expect(txt).toContain('This week, in one line')
+    expect(txt).toContain(brief.headline)
+    expect(txt).toContain(brief.verdict)
+    // The lead panel is a claim about the data, not decoration: the headline has
+    // to carry the same figures the tiles do.
+    expect(brief.headline).toContain(String(RESULT.kpis.materialsAtRisk))
+    expect(txt).not.toMatch(/NaN|undefined|Infinity/)
+  })
+
+  it('every Health tab paints its charts', async () => {
+    const c = await render(<Health />)
+    for (const [label, charts] of [
+      ['Today', 2], ['Demand ahead', 1], ['Cash & cover', 1], ['Vs the old way', 0],
+    ] as [string, number][]) {
+      await clickTab(c, label)
+      expect(sizedCharts(c), `Health / ${label}`).toHaveLength(charts)
+      if (charts > 0) expect(marks(c), `Health / ${label}`).toBeGreaterThan(4 * charts)
+      expect(c.textContent ?? '', `Health / ${label}`).not.toMatch(/NaN|undefined|Infinity/)
+      expect(c.innerHTML).not.toMatch(/(stroke|fill|stop-color)="[^"]*var\(/)
+    }
+  })
+
+  it('Health reports the stock trade without hiding the losing rows', async () => {
+    const c = await render(<Health />)
+    await clickTab(c, 'Vs the old way')
+    const txt = c.textContent ?? ''
+    // Both directions are on the page: the wins and the stock it costs.
+    expect(txt).toContain('Weeks a material ran short')
+    expect(txt).toContain('Average stock held')
+    expect(txt).toContain('Storage cost')
+    expect(txt).toContain('does not win on inventory')
+  })
+
+  it('Exceptions still carries the queue figures on its tiles', async () => {
+    // The lead panel was removed; the numbers it summarised have to survive on
+    // the tiles, or the screen quietly stopped saying how much is overdue.
+    const brief = queueBrief(QUEUE)
+    const txt = (await render(<Exceptions />)).textContent ?? ''
+    expect(txt).not.toContain('What the queue says')
+    expect(txt).toContain('Needs a person today')
+    expect(txt).toContain(String(brief.overdue + brief.today))
+    expect(txt).toContain('Low confidence')
+    expect(txt).not.toMatch(/NaN|undefined|Infinity/)
+  })
+
+  it('every Exceptions tab paints its charts', async () => {
+    const c = await render(<Exceptions />)
+    for (const [label, charts] of [
+      ['The queue', 0], ['By deadline', 2], ['Same subject', 0], ["What it's worth", 2],
+    ] as [string, number][]) {
+      await clickTab(c, label)
+      expect(sizedCharts(c), `Exceptions / ${label}`).toHaveLength(charts)
+      if (charts > 0) expect(marks(c), `Exceptions / ${label}`).toBeGreaterThan(4 * charts)
+      expect(c.textContent ?? '', `Exceptions / ${label}`).not.toMatch(/NaN|undefined|Infinity/)
+      expect(c.innerHTML).not.toMatch(/(stroke|fill|stop-color)="[^"]*var\(/)
+    }
+  })
+
+  it('rolls a subject up instead of listing it three times', async () => {
+    const repeats = repeatSubjects(QUEUE)
+    const c = await render(<Exceptions />)
+    await clickTab(c, 'Same subject')
+    const txt = c.textContent ?? ''
+    if (repeats.length === 0) {
+      expect(txt).toContain('No subject appears twice')
+      return
+    }
+    // Every roll-up holds at least two items, and names them.
+    for (const x of repeats) expect(x.items.length).toBeGreaterThanOrEqual(2)
+    expect(txt).toContain(repeats[0].subject)
+    expect(txt).toContain(`${repeats[0].items.length} items`)
+    // A roll-up is presentation, not suppression: the queue tab still has them.
+    await clickTab(c, 'The queue')
+    expect((c.textContent ?? '')).toContain(repeats[0].subject)
+  })
+
+  it('Health and Exceptions agree on what to do first', async () => {
+    const first = rankQueue(QUEUE)[0]
+    if (!first) return
+    const health = (await render(<Health />)).textContent ?? ''
+    const exceptions = (await render(<Exceptions />)).textContent ?? ''
+    expect(health, 'Health did not name the ranked-first subject').toContain(first.subject)
+    expect(exceptions, 'Exceptions did not name the ranked-first subject').toContain(first.subject)
+    expect(weekBrief(ds, RESULT, QUEUE).firstToDo?.id).toBe(first.id)
+    expect(queueBrief(QUEUE).firstToDo?.id).toBe(first.id)
+  })
+})
+
 describe('nothing renders as broken', () => {
   const screens: [string, React.ReactElement][] = [
     ['Health', <Health />], ['Exceptions', <Exceptions />], ['Forecast', <Forecast />],
     ['Signals', <Signals />], ['Anomalies', <Anomalies />],
     ['Stock', <Stock />], ['Plan', <Plan />], ['Buy', <Buy />], ['Orders', <Orders />],
-    ['Simulate', <Simulate />], ['Proof', <Proof />], ['Setup', <Setup />],
+    ['Simulate', <Simulate />], ['Connected', <Connected />],
+    ['Proof', <Proof />], ['Setup', <Setup />],
   ]
 
   for (const [name, el] of screens) {

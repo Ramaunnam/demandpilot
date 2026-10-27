@@ -16,6 +16,7 @@ import Plan from '@/screens/Plan'
 import Buy from '@/screens/Buy'
 import Orders from '@/screens/Orders'
 import Simulate from '@/screens/Simulate'
+import Connected from '@/screens/Connected'
 import Proof from '@/screens/Proof'
 import Setup from '@/screens/Setup'
 
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="buy" element={G(<Buy />)} />
           <Route path="orders" element={G(<Orders />)} />
           <Route path="simulate" element={G(<Simulate />)} />
+          <Route path="connected" element={G(<Connected />)} />
           <Route path="proof" element={G(<Proof />)} />
           <Route path="setup" element={<Setup />} />
           <Route path="*" element={<Navigate to="/" replace />} />

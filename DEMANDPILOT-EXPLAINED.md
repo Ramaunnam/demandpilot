@@ -33,7 +33,7 @@ DemandPilot is a **single-page React application with no backend**. It is a work
 
 The important architectural fact, which shapes everything else: **every number displayed is computed in the browser at runtime.** There is no API, no database, no fixtures file of pre-baked results. The app generates a synthetic but internally consistent dataset from a fixed random seed, then runs a genuine planning engine over it — fitting and back-testing forecasting models, detecting anomalies, computing safety stock, exploding a bill of materials, netting against inventory, and producing purchase recommendations.
 
-This matters because it makes the central claim honest. When the app says "change a setting and every screen moves together," that is literally true: there is exactly one calculation, `runPlanning()`, and all thirteen screens read its output.
+This matters because it makes the central claim honest. When the app says "change a setting and every screen moves together," that is literally true: there is exactly one calculation, `runPlanning()`, and all fourteen screens read its output.
 
 **Scale of one run:** 240 products × 4 regions = 960 demand series. Each series has 3 models fitted and back-tested, then the winner refitted on full history. That is 2,880 model fits plus 960 refits per run, completing in roughly **578 ms** in Node.
 
@@ -83,7 +83,7 @@ This is the spine of the whole application. Follow it once and the rest of the c
 │    buildCustomers → 60 across 8 industries                           │
 │    buildOrders    → 2,500 customer orders drawn from real demand     │
 │    buildPurchaseOrders → 230 POs with realistic slip                 │
-│    buildSignals   → 32 market signals (12 scripted + 20 filler)      │
+│    buildSignals   → 34 market signals (14 scripted + 20 filler)      │
 │    buildCommodity → 130 weeks of nickel / moly / ferrochrome index   │
 │    buildPlanHistory → 21 audit entries                               │
 │                              │                                       │
@@ -94,8 +94,8 @@ This is the spine of the whole application. Follow it once and the rest of the c
 │  engine/index.ts  runPlanning({ ds, settings, weeksAdvanced, … })    │
 │                                                                       │
 │   0. Build the signal lookup   which signals touch which SKU×region  │
-│   1. forecast.ts  × 960        3 models fitted, back-tested, winner  │
-│   2. anomaly.ts   × 960        rolling z-score + materiality gates   │
+│   1. anomaly.ts   × 960        rolling z-score + materiality gates   │
+│   2. forecast.ts  × 960        3 models fitted, back-tested, winner  │
 │   3. inventory.ts × 40         safety stock, ROP, cover, health      │
 │   4. mrp.ts       × 1          5-stage MRP over 40 materials × 26 wk │
 │   5. procurement.ts × 1        buy / expedite / reduce recommendations│
@@ -112,8 +112,14 @@ This is the spine of the whole application. Follow it once and the rest of the c
                                │
         ┌──────────────────────┼──────────────────────┐
         ▼                      ▼                      ▼
-   13 screens            Command palette          Tour / WeekMenu
+   14 screens            Command palette          Tour / WeekMenu
 ```
+
+**Why anomalies come first.** The planner's decision on an anomaly changes what the forecast is
+allowed to learn from, so detection has to happen before the models are fitted. *Ignored as one-off*
+replaces the flagged weeks with what was expected; *Accepted as new trend* lifts the forecast to the
+level the product is actually selling at. Detection itself always reads raw sales, so a decided anomaly
+stays visible with its decision on it.
 
 The entire run happens inside a **Web Worker** (`src/worker/engine.worker.ts`) so the UI never blocks. The worker posts progress messages back, which is what the loading screen reads.
 
@@ -127,41 +133,51 @@ src/
   App.tsx               BrowserRouter + 14 routes + the Gate component
   vite-env.d.ts
 
+  assets/j2w-logo.png   the JoulesToWatts wordmark, 400 x 194, transparent
+
   data/
     types.ts            237 lines — every interface in the app
     catalog.ts          339 lines — hand-written master data
     generate.ts         692 lines — the seeded dataset generator
 
   engine/
-    index.ts            688 lines — runPlanning(), the orchestrator
+    index.ts            778 lines — runPlanning(), the orchestrator
     forecast.ts         397 lines — 3 models + back-testing
-    anomaly.ts          187 lines — rolling z-score detection
+    anomaly.ts          344 lines — z-score detection + shift grouping
+    insights.ts         430 lines — read-only views for the Anomalies screen
+    briefing.ts         342 lines — read-only views for Health and Exceptions
     inventory.ts        166 lines — safety stock / ROP / health
-    mrp.ts              256 lines — 5-stage material requirements planning
+    mrp.ts              318 lines — 5-stage material requirements planning
     procurement.ts      267 lines — recommendations
-    scenario.ts         232 lines — what-if levers + costed plan options
-    replay.ts           324 lines — before/after simulation
+    scenario.ts         321 lines — what-if levers + costed plan options
+    replay.ts           449 lines — before/after simulation
+    selectors.ts        246 lines — shared derived views
     engine.test.ts      322 lines
-    smoke.test.ts       216 lines
+    anomaly.test.ts     116 lines
+    consistency.test.ts 225 lines
+    scenario.test.ts    124 lines
+    smoke.test.ts       257 lines
 
   worker/engine.worker.ts   43 lines
 
-  store/useStore.ts     291 lines — Zustand state + all actions
+  store/useStore.ts     379 lines — Zustand state + all actions
 
   ui/
-    Shell.tsx           176 lines — sidebar, top bar, toasts
-    kit.tsx             374 lines — Tile, Chip, Panel, Drawer, Modal, …
+    Shell.tsx           195 lines — sidebar, top bar, toasts
+    Logo.tsx             71 lines — the JoulesToWatts lockup + a drawn fallback
+    kit.tsx             390 lines — Tile, Chip, Panel, Drawer, Modal, …
     Table.tsx           124 lines — sortable, searchable, paged, CSV
-    charts.tsx          235 lines — Recharts wrappers
+    charts.tsx          399 lines — Recharts wrappers
     colors.ts            43 lines — literal palettes (not CSS vars)
-    WeekMenu.tsx        116 lines — the planning-week calendar
+    WeekMenu.tsx        121 lines — the planning-week calendar
     Tour.tsx             69 lines — 8-step guided walkthrough
-    Palette.tsx          76 lines — Ctrl+K command palette
+    Palette.tsx          77 lines — Ctrl+K command palette
 
-  screens/              13 screens, 2,619 lines total
+  screens/              14 screens, 5,791 lines total
   content/glossary.ts   123 lines — 39 plain-language definitions
+  content/alerts.ts      44 lines — the 12 alert rules, shared by Setup and Connected
   lib/                  format, csv, rng, view helpers
-  index.css             147 lines — design tokens + component classes
+  index.css             203 lines — design tokens + component classes
 ```
 
 ---
@@ -387,7 +403,7 @@ Also set here: `onOrder` (42% chance of 6–20 days' worth), and **`staticMinLev
 
 - **`buildOrders`** walks every series from week 92 to 110, takes a 16% chance per week, and sizes the order at 30–90% of that week's real demand. Status derives from the promised week relative to today. Result: **2,500 orders**. There is a careful comment explaining that past-today weeks deliberately use the trailing average rather than the real figure, because whether a week clears the 0.4 t floor changes how many RNG draws the loop makes — and every number generated afterwards rides on that stream.
 - **`buildPurchaseOrders`** creates 6–9 POs per critical material, 3–6 otherwise = **230**. Slip is drawn against the supplier's OTIF, so unreliable suppliers genuinely arrive late.
-- **`buildSignals`** = **12 scripted + 20 filler = 32**. The scripted ones carry the story: SIG-001 (new South pharma plants, +32%, confidence 0.82), SIG-002 (customers raised 316L forecasts, +18%, 0.91), SIG-003 (moly index +9.4%), SIG-004 (port congestion, −14%), SIG-005 (appliance makers leaving 430, −16%).
+- **`buildSignals`** = **14 scripted + 20 filler = 34**. The scripted ones carry the story: SIG-001 (new South pharma plants, +32%, confidence 0.82), SIG-002 (customers raised 316L forecasts, +18%, 0.91), SIG-003 (moly index +9.4%), SIG-004 (port congestion, −14%), SIG-005 (appliance makers leaving 430, −16%), SIG-010 (metro and coach orders in the North, +24%) and SIG-011 (architectural cladding in the West, +19%). The last two were added for the extra planted shifts, so those shifts have a cause the screen can find.
 - **`buildCommodity`** random-walks three indices from 100, with moly given an extra × 1.014 per week over the last six weeks so the index chart matches SIG-003.
 
 ---
@@ -470,7 +486,35 @@ The band widens with horizon — further out means less certain.
 
 **Decomposition** splits the forecast into `base` (trailing 8-week mean), `trend` (HW trend × i × 0.97), `season` (base × (seasonFactor − 1)) and `signal` (whatever is left over). This is what the Forecast screen's "Parts" tab draws.
 
-### 6.2 `anomaly.ts` — catching demand shifts in days
+#### The planted shifts
+
+`SHIFTS` in `generate.ts` is the list of real market changes written into the history. One shift is not
+what a planner's week looks like, so there are five, in both directions, and only four of them have a
+signal behind them.
+
+| Shift | Move | Forms | Started | Cause in the data |
+|---|---|---|---|---|
+| South 316L | **up 35%** | all | week 101 | SIG-001, pharma plants announced |
+| North 201 | up 30% | all | week 100 | SIG-010, metro and coach orders |
+| West 304 | up 26% | Sheet only | week 101 | SIG-011, architectural cladding |
+| South 304 | down 30% | HR coil + Sheet | week 100 | SIG-027, competitor capacity — at a fraction of the size |
+| West 316L | **down 26%** | all | week 100 | **nothing** |
+
+Each ramps in over a few weeks and then holds its level into the forward weeks, because these are
+changes in the market rather than blips. That is what makes them shifts rather than episodes.
+
+The last one is deliberate in two ways. Nothing in the signal feed explains it, so the screen has to
+say so instead of reaching for the nearest signal — and one signal (SIG-024, West 316L **+9.2%**)
+predicted the opposite, so the system has to report a fall against a signal that called a rise.
+
+**Two of these were rewritten before they worked, and the reason is worth knowing.** A fall drags a
+series' recent mean *down*, and the detector gates on `mean(recent) < 6.0 t`. A small grade can
+therefore drop 30% and be excluded before it is ever examined. 430 East, 430 South and 201 South were
+all tried as the unexplained shift and none of them surfaced; only 304 and 316L carry enough volume to
+fall and still be seen. `anomaly.test.ts` now asserts that every entry in `SHIFTS` surfaces as a group,
+because the first three failures were silent — the screen simply showed fewer cards.
+
+### 6.2 `anomaly.ts` — catching demand shifts in the week they appear
 
 The idea in one line: work out what each week *should* have looked like from the weeks around it, then flag weeks further away than normal.
 
@@ -486,7 +530,7 @@ The idea in one line: work out what each week *should* have looked like from the
 
 Then `z = (y[t] − expected) / sd`, flagged when `|z| ≥ threshold` (default **2.5σ**, planner-adjustable 1.5–4.0).
 
-**Grouping** joins consecutive same-direction flagged weeks into one episode, and will bridge a single gap week if it still reaches 65% of threshold.
+**Episode building** joins consecutive same-direction flagged weeks into one episode, and will bridge a single gap week if it still reaches 65% of threshold.
 
 **Materiality filter** — an episode is only reported if *all three* hold:
 
@@ -500,9 +544,35 @@ The comment explains the first one precisely: without it, a week going from 0.2 
 
 **Severity:** High needs `peakZ ≥ 1.6×threshold` **and** ≥ 2 weeks; Medium needs `peakZ ≥ 1.15×threshold` **or** ≥ 3 weeks; else Low.
 
-**`detectedWeek`** is `t+1` for multi-week episodes, `t` for single weeks — a single week needs a stronger signal to be believed. `detectedAfterDays = (detectedWeek − startWeek) × 7 + 3`, which is why the demo reports "caught after 3 days".
+**`detectedWeek`** is `t+1` for multi-week episodes, `t` for single weeks — a single week needs a stronger signal to be believed. Detection is reported in **whole weeks**: `detectedAfterWeeks = detectedWeek − startWeek`, and `detectedAfterDays` is just that × 7.
 
-**Cause attribution** searches for a demand signal in the 8 weeks before the episode whose effect has the *same sign* as the gap. If found, the signal's title becomes `likelyCause` and `linkedSignalId` is set — this is what wires the Signals screen to the Anomalies screen.
+> The old formula was `(detectedWeek − startWeek) × 7 + 3`. That `+ 3` is where the demo's "caught after 3 days" came from — a constant presented as a measurement. The data is weekly, so the honest answer is "in the week it began", which is what the UI says now. `anomaly.test.ts` asserts `detectedAfterDays % 7 === 0`, so the invented precision cannot come back.
+
+**Cause attribution** searches for a demand signal in the 8 weeks before the episode whose effect has the *same sign* as the gap. If found, the signal's title becomes `likelyCause` and `linkedSignalId` is set — this is what wires the Signals screen to the Anomalies screen. If not, `likelyCause` reads "No matching market signal found." and stops there. It used to guess — *"Most likely a single large order or channel stocking"* — which reads as a finding rather than as a blank.
+
+#### Shifts versus one-off weeks
+
+`groupAnomalies()` collapses the queue by what a planner actually decides on. When a region genuinely changes what it buys, the detector fires in every affected product, and it is right to: 316L has 60 SKUs, so one real step-up in the South surfaces as dozens of rows. Those belong together as **one decision**.
+
+But grouping on grade + region + direction alone also swept in unrelated single weeks from months apart, so ordinary week-to-week wobble read as "+38% across 16 products". A group is only a **Shift** when it looks like one:
+
+| Test | Constant | Meaning |
+|---|---|---|
+| last flagged week ≥ `now − 2` | `SHIFT_LIVE_WEEKS = 3` | still running |
+| `startWeek ≥ now − 7` | `SHIFT_RECENT_WEEKS = 8` | started recently |
+| ≥ 3 products with `weeksRunning ≥ 2` | `SHIFT_MIN_SUSTAINED = 3` | sustained, and at the same time |
+
+Everything else in that grade/region/direction becomes a **"One-off weeks"** group — severity Low, whose suggested action is to ignore it so the models stop learning from it. Nothing is suppressed: every open series sits in exactly one group, which `consistency.test.ts` asserts.
+
+A shift's `startWeek` is anchored to the first week products began moving *together* (the earliest 2+ week run), not to the earliest stray week caught in its window. Each group also carries `weeklyGapT` / `weeklyGapINR` — the run-rate gap, which is the number a buyer needs — alongside the cumulative `totalImpactT` / `totalImpactINR`, and a `confidence` built from how many products are sustained, how long it has run, and whether a signal explains it.
+
+**Confidence, and what a missing cause costs.** A group's confidence is
+`clamp(42 + sustained×5 + weeksRunning×7, 40, explained ? 95 : 82)`. Having a signal behind it raises
+the *ceiling* rather than adding a bonus: it was written as `+ 14 if explained` inside a clamp at 95,
+which the cap swallowed whole — once a shift was wide enough and had run long enough, one that nobody
+could explain still displayed 95%. The West 316L shift is the case that exposed it, and it now reads 82.
+
+**The badge counts shifts only.** `kpis.openAnomalies` is the shift count, because that is how many decisions are waiting. `kpis.openAnomalySeries` still counts every flagged product × region.
 
 ### 6.3 `inventory.ts` — live reorder parameters
 
@@ -713,6 +783,68 @@ Sorted by severity, then due date. Every item carries a `linkId` so nothing is a
 
 ---
 
+### 6.9 `insights.ts` — read-only views for the Anomalies screen
+
+430 lines of derivation, no new numbers. Everything here is computed from the dataset and the
+`PlanningResult`; nothing is stored and nothing is invented.
+
+| Export | Answers |
+|---|---|
+| `demandOutlook(ds, r, weeks = 8)` | Next 8 weeks of forecast against the last 8 weeks of actual sales, for all 16 grade × region cells — where demand is about to jump or fall |
+| `priceAlerts(ds, r)` | Which inputs are getting dearer. Reads the nickel / moly / ferrochrome index, calls each one Rising / Easing / Steady, and marks it **urgent** when cover is short against a long lead time |
+| `orderWatch(ds, r)` | Customers ordering outside *their own* normal, and the largest orders of the last 4 weeks against what is typical for that product and region (2.5× or more is marked unusual) |
+| `explainShift(ds, r, g, prices)` | One shift told as a story — see below |
+| `spottedText(weeks)` | "in the week it began" / "a week later" — the one place detection timing is worded |
+
+`explainShift()` is the one the detail view is built on, and it answers the questions in the order a
+planner asks them:
+
+| Field | Answers |
+|---|---|
+| `normal` | What a normal week looks like: the level, and the **usual week-to-week swing** as a percentage, measured on the ten weeks before the shift began and volume-weighted so one tiny product cannot set it. Without this, "up 51%" has nothing to be up against — a series that normally swings ±35% and one that holds ±4% are not saying the same thing at the same percentage |
+| `actualNow` / `expectedNow` / `forecastNow` | How far outside normal it is now, and whether the forecast has caught up |
+| `spread` / `widening` / `spreadLabel` | Week by week, how many of the group's products were unusual and what gap they add up to. One product drifting for five weeks and five products moving together in the last two give the same average and mean very different things |
+| `evidence` | The cause, by channel: the sales pattern, the market signal, the order book — each marked as agreeing with the move or not, so they are allowed to disagree |
+| `orders` | Tonnes a week booked before the shift against during, how many customers, and whether one of them is most of it |
+| `materials` | What it reaches: extra need per week, cost per week, cover now against cover if the gap holds, and the price direction of each |
+| `priceNote` | A price move on an affected material, kept **out** of `evidence` on purpose: a rising index is not a reason demand moved, it is what the move costs, and filing it as evidence would have the UI tick or cross it as though it explained something |
+| `ifNewTrend` / `ifOneOff` | What each decision would do to the forecast, in tonnes a week |
+
+**Only the past is shown.** Every function reads weeks with `index < todayWeek`. The dataset carries 13
+hidden future weeks so the simulator has somewhere to go; surfacing them here would leak sales the
+planner cannot know yet, which is the most flattering and most dishonest thing a demo can do.
+`anomaly.test.ts` has three tests holding this — one each for the shift chart, the price index and the
+order book.
+
+### 6.10 `briefing.ts` — read-only views for Health and Exceptions
+
+The same contract as `insights.ts`: nothing invents a number. Everything derives from the
+`PlanningResult` or from the one list `selectExceptions()` returns, so a figure on Health cannot
+disagree with the screen it links to.
+
+| Export | Answers |
+|---|---|
+| `rankQueue(items)` | The queue in the order a person should work it: past its date first, then severity, then how soon, then value |
+| `weekBrief(ds, r, queue)` | Health's lead panel — the position in a sentence, the one item to start with, and three supporting facts |
+| `stockLadder(r)` | Count, value and share of total stock value per status, worst material first |
+| `coverBands(r)` | How the 40 materials spread across days of cover, by count and by value |
+| `cashPosition(ds, r)` | Spend against release, line by line, and the net |
+| `scorecard(r)` | Eight replay measures with a `better` field per row, plus the trade in a sentence |
+| `queueBrief(items)` | Exceptions' lead panel, including how many items are below 60% confidence |
+| `repeatSubjects(items)` | Subjects with two or more items in the queue, rolled up |
+| `valueByQueue(items)` | Spend and release per queue, kept separate so they cannot net each other out |
+| `confidenceBands(items)` | The confidence distribution across the queue |
+
+**Why `rankQueue()` exists.** Health showed `queue.slice(0, 7)` in engine order while Exceptions sorted
+its own way, so the two screens could each nominate a different "most urgent" item from the same list.
+Both now call this, and a test asserts they name the same subject.
+
+**Why `ScoreRow.better` exists.** DemandPilot loses two rows of the replay — it holds more stock and
+pays more to store it. Carrying which column is better as data means the UI styles those two as losses
+instead of formatting them like the wins, which is the same honesty the Proof screen leads with.
+
+---
+
 ## 7. The worker and the store
 
 ### `worker/engine.worker.ts`
@@ -750,6 +882,7 @@ Almost every action writes a `PlanHistoryEntry`, giving a real audit trail. `rev
 | `/buy` | Recommendations | yes |
 | `/orders` | Orders | yes |
 | `/simulate` | Simulate | yes |
+| `/connected` | Connected systems | yes |
 | `/proof` | Proof | yes |
 | `/setup` | Setup | **no** |
 | `*` | → redirect to `/` | — |
@@ -758,15 +891,40 @@ The `Gate` component shows the loading screen until `result` exists, or an error
 
 ### Sidebar — 5 groups, 12 items
 
+(Models is not in the rail: it became a tab inside Forecast. `ui/nav.test.ts` holds this.)
+
 | Group | Items | Live badge |
 |---|---|---|
 | Overview | Health, Exceptions | workbench length |
-| Demand | Forecast, Signals, Anomalies, Models | open anomalies |
+| Demand | Forecast, Signals, Anomalies | open anomalies |
 | Supply | Stock, Plan & MRP | materials at risk |
 | Buy | Recommendations, Orders | open recommendations |
-| Decide | Simulate, Proof | — |
+| Decide | Simulate, Connected systems, Proof | — |
 
 Collapsible to a 52 px icon rail.
+
+### Branding
+
+`ui/Logo.tsx` carries two marks and uses them at different sizes.
+
+**`Wordmark`** is the supplied JoulesToWatts PNG — a wide lockup, roughly 2:1, drawn for light
+backgrounds. Two accommodations follow from that:
+
+- **Dark mode puts a light plate behind it.** Measured against the dark surface the red runs **2.50:1**
+  and the grey **2.70:1**, both well under readable; on white they are 6.78:1 and 6.29:1. The fix is to
+  give the logo the background it was drawn for rather than recolour someone's brand mark. The plate's
+  padding is unconditional and only the background is themed, so toggling the theme does not change the
+  element's width and nudge everything beside it.
+- **It is never used below about 24px tall.** The "Time Matters" tagline is under a tenth of the image
+  height, so below that it stops being type and becomes texture.
+
+**`Mark`** is a drawn `J2W` tile taking the house colour from the same token every chip and button
+reads. It stands in anywhere the lockup cannot fit: the 52px collapsed rail, and the browser tab, where
+an inline-SVG favicon in `index.html` carries the same letters. That is the usual full-lockup-versus-icon
+split, not a second brand.
+
+The sidebar header shows the lockup, a hairline divider and the product name; the loading splash shows
+the lockup at 44px, where there is room for it.
 
 ### Top bar
 
@@ -790,36 +948,85 @@ Health → Signals → Anomalies → Models → Stock → Plan → Buy → Proof
 
 ### 9.1 Health (`/`) — the overview
 
+The landing screen, and the only one that has to answer *what do I do today* before anything is
+clicked. It used to be six tiles, two charts and a list: every number true, none of them saying
+anything.
+
 **Header:** "240 products · 40 materials · 4 regions", plus an at-risk chip.
 
-**6 KPI tiles:**
+**6 tiles**, each a link or a jump to the tab that explains it:
 
-| Tile | Value | Sub | Links to |
+| Tile | Value | Sub | Goes to |
 |---|---|---|---|
-| Accuracy | `forecastAccuracyPct` | delta vs old method | `/models` |
-| Anomalies | `openAnomalies` | `N high` | `/anomalies` |
-| Stockout risk | `stockoutRiskCount` | `N at reorder` | `/stock` |
-| Stock value | `inventoryValueINR` | `N days` | `/simulate` |
-| Excess | `excessValueINR` | `N materials` | `/stock` |
-| Service | `serviceLevelPct` | "demand met" | `/proof` |
+| Accuracy | `forecastAccuracyPct` | delta vs the old method | `/forecast?tab=accuracy` |
+| Anomalies | `openAnomalies` *(shifts)* | `N series behind them` | `/anomalies` |
+| Needs a person | overdue + due today | `N overdue of M waiting` | Today tab |
+| Stock value | `inventoryValueINR` | `N days of cover` | Cash & cover tab |
+| Excess | `excessValueINR` | `N materials · releasable` | Cash & cover tab |
+| Service | `serviceLevelPct` | "demand met, by value" | Vs the old way tab |
 
-**The Chain rail** — six clickable cards showing the signal-to-order chain, each with a live count: Signals (unread) → Forecast (accuracy) → Plan (planned orders) → Stock (at risk) → Buy (to approve) → Orders (open). This is capability K6 made literal.
+**"This week, in one line"** — the lead panel, from `weekBrief()`. A headline stating the position
+(decisions waiting, how many past their date, materials at risk and overstocked, forecast against the
+old method), then a verdict that *names the one item to start with* and says how many others are also
+late, then three facts: what needs a person today, the net cash position, and the material with the
+least room left. The button on the panel opens that first item directly.
 
-**Charts:** "Demand by region" (10 weeks actual + 6 weeks forecast, 4 lines) and "Stock health" (bar chart of the four status buckets).
+**The Chain rail** — six clickable cards showing the signal-to-order chain, each with a live count:
+Signals (unread) → Forecast (accuracy) → Plan (planned orders) → Stock (at risk) → Buy (to approve)
+→ Orders (open). This is capability K6 made literal.
 
-**"Needs a decision"** — the top 7 workbench items: severity chip, queue chip, title, confidence bar, days-due (showing a red **now** when overdue), each routing to its `linkId`.
+**Four tabs:**
+
+- **Today** — "Needs a decision": the top 7 of the queue in `rankQueue()` order, then "Demand by
+  region" (10 weeks actual + 6 weeks forecast, 4 lines) and "Stock health".
+- **Demand ahead** — the region chart at full height, plus "Biggest moves ahead" from
+  `demandOutlook()`: the six largest grade × region moves, next 8 weeks against last 8. The panel
+  says plainly that a move here is a forecast, not an anomaly — it is what the models expect *before*
+  anything has gone wrong — and points at `/anomalies` for what already has.
+- **Cash & cover** — "Where the stock value sits" (`stockLadder()`: count, value and share of total
+  stock value per status, worst material named, with the share as a meter), "Materials by days of
+  cover" (`coverBands()`), then **To spend** against **To release** from `cashPosition()`, each line
+  linking to its recommendation. The release panel's note states whether the overstock covers the
+  buying, with the net figure.
+- **Vs the old way** — `scorecard()`: eight measures from the replay, spreadsheet against DemandPilot,
+  with each row's `better` field deciding which column is bolded, so the two rows DemandPilot *loses*
+  (average stock, storage cost) are styled as losses rather than quietly formatted like wins. Beside
+  it, the trade in a sentence and the return on the extra stock. Links through to `/proof`.
 
 ### 9.2 Exceptions (`/exceptions`) — the work queue
 
-**5 tiles:** Open · Critical · High · Confident (≥ 80%) · Value (sum of |valueINR|).
+The queue tab is the working surface and keeps its shape: one row per item, with Why / accept /
+dismiss on it. What was missing was any way to read the queue *as a whole* — a list of rows does not
+tell you that four of them are the same material, that most of the value sits in two entries, or which
+ones the engine is least sure about. Those are the other three tabs.
 
-**2 charts:**
-- "What the queue is made of" — horizontal stacked bars per queue, splitting Critical/High from Medium/Low. *Note: "Critical and high severity are counted separately: those are the ones with a deadline that has teeth."*
-- "When each decision is due" — six buckets: Overdue, Today, 2–3 days, This week, Next week, Later.
+**5 tiles:** Open · Needs a person today (overdue + today) · Same subject twice · Low confidence
+(under 60%) · Value at stake. Each jumps to the tab that explains it.
 
-**Filter chips** for all 6 queues, then one card per item: checkbox (for bulk accept) · severity · queue · subject (links to the material/SKU) · title + recommended action · confidence · due · **Why** / ✓ / ✗ buttons.
+There is **no lead panel**. One existed — "What the queue says", a headline and verdict from
+`queueBrief()` — and it was removed on request. The figures it summarised survive on the tiles and the
+header chips, which still read `queueBrief()`: overdue, due today, low confidence. A test asserts that,
+because removing a panel is also how a screen quietly stops saying how much is overdue.
 
-**The Why drawer** shows the recommended action, the reason, the weighted signal bars, and a 3-up row of queue/due/value.
+**Four tabs:**
+
+- **The queue** — filter chips for every queue, then the item rows in `rankQueue()` order (previously
+  engine order, which could differ from Health's). Ten at a time, with "Show all".
+- **By deadline** — "When each decision is due" (six buckets: Overdue, Today, 2–3 days, This week,
+  Next week, Later) and "What the queue is made of" (stacked per queue, Critical/High split from
+  Medium/Low), then the full "Needs a person today" list.
+- **Same subject** — `repeatSubjects()`. One material generating an Order-now, an Expedite and an
+  Unusual-demand entry is three rows but one conversation with one supplier. Each roll-up shows the
+  worst severity, the subject, the item count, the combined value, the soonest date, the queues it
+  spans, and every item with its own **why** link. Grouping is presentation, not suppression: the
+  items are all still on the queue tab, and a test asserts it.
+- **What it's worth** — "Spend and release, by queue" (`valueByQueue()`, deliberately two bars rather
+  than one net figure), "How sure the engine is" (`confidenceBands()`), and the ten biggest items by
+  absolute value, with cash coming *back* shown in green and signed.
+
+**The Why drawer** shows the recommended action, the reason, the weighted signal bars, a 3-up row of
+queue/due/value, and — when the subject has other items waiting — an "Also waiting on …" panel that
+switches the drawer straight to them.
 
 ### 9.3 Forecast (`/forecast`) — capability K1
 
@@ -870,17 +1077,65 @@ Health → Signals → Anomalies → Models → Stock → Plan → Buy → Proof
 
 ### 9.5 Anomalies (`/anomalies`) — capability K2
 
-**6 tiles:** Open · High · Above forecast (stockout risk) · Below forecast (excess risk) · Sensitivity (σ, links to Setup) · Impact (₹).
+The widest screen in the app, and the one that answers "what changed, and what do I do about it" for
+demand, material prices and customer orders in one place. Five tabs; the six tiles across the top are
+buttons that jump to the matching tab.
 
-**"How one is decided"** — a 4-step explainer: ① Expected (from the 10 weeks before, adjusted for last year) ② Wobble (how much this product normally varies) ③ Compare (flag if the gap exceeds Nσ) ④ Materiality (ignore gaps under 14% or too few tonnes).
+**6 tiles:** Real shifts (needing a decision) · Next 8 weeks (biggest grade × region move ahead) ·
+Prices rising · Customer changes · One-off weeks · Sensitivity (σ, links to Setup).
 
-**Filters:** status (Open / Accepted / Ignored / Investigating / All) and severity.
+**Tab 1 — Demand shifts.** The lead shift as a sales-vs-expected line chart, beside "Top shift, in one
+line": a sentence naming region, grade, direction and start week, then three facts — extra tonnes per
+week with the sales value, the material hit hardest with how much more it needs per week, and whether a
+market signal explains it. Below, the shift table (status filter chips, search, CSV) with the rule
+stated on the panel itself: *a shift = 3+ products unusual for 2+ weeks, at the same time, still
+running*. With no shifts open, the outlook heatmap takes the top slot instead of an empty panel.
 
-**Table — 10 columns:** Sev · Product · Region · Gap (signed %, coloured) · Expected · Actual · Weeks · **Caught** (days, green) · Impact (₹) · Status.
+**Tab 2 — Demand outlook.** A grade × region heatmap of next-8 against last-8 tonnes — green where
+demand is about to rise, red where it is about to fall — with the biggest moves up and down listed
+beside it. This is the tab that shows a change *before* it becomes an anomaly.
 
-**Detail drawer:** an expected-vs-actual chart over the surrounding weeks; a 4-up of expected / actual / z-score / caught-after; **Likely cause** (the linked signal title, or an honest "No matching market signal…"); **Materials affected** sorted by tightest cover; and **Suggested action**.
+**Tab 3 — Material prices.** One card per material whose index has moved: direction, the index it
+tracks, the move over the window, current cover against lead time, and a recommendation that is allowed
+to say "do nothing". A material already in excess never gets a buy-ahead — `anomaly.test.ts` holds
+that.
 
-**Resolution modal** — three actions (New trend / One-off / Investigating), each requiring a reason. Accepting as a new trend feeds back into the next engine run.
+**Tab 4 — Customer orders.** Customers ordering differently from their own usual (last 4 weeks against
+their own baseline, flagged only when clearly outside their normal swings), and the largest orders of
+the last 4 weeks with a "vs typical" multiple.
+
+**Tab 5 — One-off weeks.** The scattered weeks that did not qualify as a shift, kept visible rather
+than hidden, so the planner can clear them as noise in bulk.
+
+**With more than one shift open**, a card per shift sits above the table: direction and size, products
+(and how many are sustained), tonnes and sales value a week, how long it has run, and whether anything
+explains it. Clicking a card re-points the chart above; double-clicking opens it. With several running
+at once the useful view is side by side — which are up, which are down, which has a cause — before
+dropping into any one of them.
+
+**Detail drawer — seven steps, in the order a planner asks them.** This is the heart of the screen:
+
+1. **What normal looks like** — the normal level, the **usual week-to-week swing** for these products,
+   and the sensitivity in force. A closing line says whether the move below is more than twice that
+   swing, which is why it was flagged rather than absorbed.
+2. **How much it is up / down** — selling now against normal, the gap as a percentage and in tonnes a
+   week, what it is worth in sales a week, how long it has run and how fast it was spotted; then the
+   actual-against-normal chart, and what eight more weeks of it would add up to.
+3. **Is it spreading?** — a bar per week since it began, showing how many products were unusual and the
+   tonnage gap, with a verdict of widening, narrowing or steady.
+4. **Why it is going up / down** — the evidence by channel (pattern, market signal, customer orders),
+   each ticked or crossed, plus a separate **material prices** line that is never ticked, with the
+   reason stated on the panel.
+5. **What it affects** — materials: extra need a week, cost a week, cover now against cover if the gap
+   holds, price direction.
+6. **The N products affected** — every member with its own weeks, gap and percentage; clicking one
+   charts that product on its own.
+7. **What to do** — the suggested action, then both choices priced in tonnes a week, and a line making
+   clear that neither button is cosmetic.
+
+**Resolution modal** — three actions (New trend / One-off / Investigating), each requiring a reason,
+applied to every series in the group at once. Accepting or ignoring now **changes the next run**: see
+§3 for what each one does to the forecast. Before this pass both buttons only changed a label.
 
 ### 9.6 Models (`/models`)
 
@@ -1033,7 +1288,68 @@ and carries a `trade-off` chip so it cannot be mistaken for one.
 
 **The five problems** — C1–C5 mapped to the screen that solves each.
 
-### 9.13 Setup (`/setup`)
+### 9.13 Connected systems (`/connected`)
+
+Sits in the **Decide** group, between Simulate and Proof. It answers the question every demo gets asked
+at minute three — *where does this data come from, and what does it do to my ERP?*
+
+**9 systems**, each a card: SAP S/4HANA (ERP, both ways) · Plant MES (MQTT, inbound) · Warehouse
+management · Salesforce CRM · Supplier portal (EDI 855/856, both ways) · Commodity price feed ·
+Industry news and policy · Teams and email (outbound only) · Manual CSV upload.
+
+The last one is **on demand**, not scheduled, and carries its own health state for that. Modelling it as
+`paused` made the card read as switched off and put a *disabled* "Sync now" in front of the one system
+on the screen with a real action available. It now reads "On demand", is excluded from the connected
+count and the freshness maths (it has no schedule, so it cannot go stale), and its drawer offers
+**Upload a file** — a link to the uploader Setup already has, rather than a second copy of the parser.
+A system may carry an `action` for exactly this: the thing a person can actually do with it.
+
+Its counts come from `store.uploads` rather than a written-in number, and its clock is the newest
+upload. With nothing uploaded it reads **never**, because there is no last upload before anyone has
+uploaded and a stale-looking "2 d ago" on an empty feed is a figure nobody measured.
+
+**The uploader takes any file type.** It was filtered to `.csv`, which meant a PDF quote, a photo of a
+delivery note or a video from the line could not reach the feed at all. The filter is gone and it takes
+multiple files at once. Widening it alone would have been a new bug — `parseCSV` on a PDF produces
+nonsense and the old code answered with "Need a product column and a quantity column" — so the handler
+splits on what the file is:
+
+- **CSV, TSV or text** is read as demand history and the models are fitted on it, exactly as before.
+  Detection is on extension first and MIME type second, because Windows reports a `.csv` as
+  `application/vnd.ms-excel` often enough to matter.
+- **Anything else** is attached to the feed as evidence, recorded with its type and size, and the toast
+  says plainly that it does not change the forecast.
+
+Both land in `store.uploads` with a `parsed` flag, so the screen never implies a photo moved the plan.
+
+Per card: health dot, direction, schedule, last sync, row count, a freshness bar against a per-feed
+staleness target, and a sparkline of the last twelve sync durations. Clicking one opens a drawer with
+the connection detail (protocol, auth, endpoint, owner), the rows that came across, the **field
+mapping table** (`MARA-MATNR → material.code`, `EKPO + EKET → purchaseOrder.qty, confirmedDate`), what
+the feed feeds, and *what stops working if it dies*.
+
+**The MES is deliberately degraded** — 47 minutes stale against a 30-minute target, one line off the
+broker, capacity carried forward from the last good read. "Retry connection" in its drawer recovers it.
+
+**Sync log** — time, system, direction, rows, duration, outcome, detail, with a failed read left on the
+record and CSV export. A row opens the system it is about.
+
+**The chain strip** at the top is six stages. Three of them have no other screen to point at, and used
+to render as plain `<div>`s carrying the hover styling of the three that were links — half the rail
+looked clickable and did nothing. Those three now scroll to their own section on this page.
+
+**There is no write-back queue.** One existed — approved purchase orders, approval requests and alert
+rows, each openable, each sendable — and it was removed on request. What it demonstrated is still true
+and still stated: the outbound systems are marked as such on their cards, the "Writes out" tile counts
+them, and `content/alerts.ts` still holds the twelve alert rules with the header button linking to
+`/setup?tab=alerts`. Only the queue panel went.
+
+**Why the numbers are trustworthy here:** every record count is read off the live `Dataset` —
+`ds.skus.length`, `Object.values(ds.bom)` flattened, `ds.orders.length` — so "240 products" on this
+screen and on the Forecast header are the same value, not two strings. The connections themselves are
+simulated, and the screen says so in a footer rather than leaving it implied.
+
+### 9.14 Setup (`/setup`)
 
 **Parameters tab** — three panels (Service & buffers, Forecasting, Ordering) plus a **"What each one touches"** table listing current value, default, and every downstream consequence.
 
@@ -1108,8 +1424,8 @@ Every one of these triggers a full re-run of all nine engine steps. A unit test 
 The narrative is built into the **history**, not typed into the screens. Everything downstream is computed.
 
 1. **A signal arrives** (week 100). New pharmaceutical and food-processing plants announced in the South. Those buyers specify 316L. *(SIG-001, +32%, confidence 0.82)*
-2. **Demand moves.** From week 101, South 316L steps up by 35% — and **stays** up, because it is a market change, not a blip.
-3. **The anomaly is caught in 3 days.** The rolling z-score flags it on the second week of the episode. A 13-week average would take roughly five more weeks to notice.
+2. **Demand moves.** From week 101, South 316L steps up by 35% — and **stays** up, because it is a market change, not a blip. It is not the only thing moving: five shifts are open in the demo week, three up and two down, and one of them (West 316L falling 26%) has no signal behind it at all.
+3. **The anomaly is caught in the week it began.** The rolling z-score flags it at the close of the week the step-up starts. A 13-week average would take roughly five more weeks to notice. Grouped, the 28 affected products read as **one shift to decide on**, not 28 rows.
 4. **The knock-on.** 316L is the only grade using molybdenum (RM-105), which has a **42-day import lead time**. At the new demand level, cover is 22.6 days — the order-by date passed **36 days ago**.
 5. **The reorder level moves by itself**, because usage and variability both rose. Status flips to Stockout risk.
 6. **A costed recommendation appears:** expedite 129 t from Supplier C (12-day lead, +8.4% price) instead of Supplier B (42-day lead). Four options are priced side by side.
@@ -1122,9 +1438,9 @@ Steps 3 through 8 are all *computed*. The only things written by hand are the si
 
 ## 14. Tests
 
-**90 tests across 5 files, all passing** (~7 s).
+**220 tests across 9 files, all passing** (~75 s, most of it jsdom).
 
-### `engine/engine.test.ts` — 38 tests
+### `engine/engine.test.ts` — 34 tests
 
 - **Inventory maths (8)** — Z increases with service level; `ROP = d×LT + SS`; safety stock rises with service level and with lead-time variability; days of cover; excess flagging; stockout-risk flagging; weekly→daily conversion.
 - **Forecasting (9)** — model selection and output length; tracks a flat series; never negative; signal uplift applied; override applied on top; band contains the forecast; short history detected; spreadsheet method is a flat average; **beats the spreadsheet on a strongly seasonal series**.
@@ -1132,7 +1448,7 @@ Steps 3 through 8 are all *computed*. The only things written by hand are the si
 - **Plan options (1)** — the recommended option reduces revenue at risk.
 - **Dataset integrity (10)** — correct volumes; 104 weeks for every series; enough held-back weeks for every calendar step; **no demand cliff when advancing**; **repeatable from the same seed**; **metallurgy is sensible**; every product has a recipe; the South 316L step is really in the history; the critical material has short cover and a long lead; every material's supplier exists.
 
-### `engine/smoke.test.ts` — 23 tests
+### `engine/smoke.test.ts` — 24 tests
 
 Full-run integration, the planning calendar, and advancing the week. The headline assertions now test
 for a large improvement *and* against a suspiciously perfect one:
@@ -1153,11 +1469,70 @@ holding cost), one asserting the fill rate is value-weighted, and one cross-scre
 that `kpis.serviceLevelPct` equals `replay.after.serviceLevelPct` so the Health tile and the Proof
 table can never disagree.
 
-### `screens/render.test.tsx` — 20 tests
+### `engine/anomaly.test.ts` — 22 tests
 
-Mounts **all 13 screens** in jsdom and asserts they paint, then re-mounts all 13 **six weeks advanced**. Also tests deep links (`?m=`, `?s=`) and that a non-existent material id does not crash.
+New in this pass, and the file to read first if the anomaly behaviour is ever in doubt.
 
-### `ui/charts.test.tsx` — 5 tests · `ui/colors.test.ts` — 4 tests
+- **The planted shifts all surface (5)** — every entry in `SHIFTS` comes out as a group in the right
+  direction and sustained across 3+ products; **no shift surfaces that was not planted**; several run at
+  once in both directions; at least one has no cause and says so rather than guessing, with a lower
+  confidence ceiling; and the demo's own shift stays top. *This is the suite that was missing — three
+  planted shifts silently failed to form and the screen just showed fewer cards.*
+- **One shift, explained (4)** — the normal level and the normal swing are both reported, and the move
+  is larger than the swing; the spread has one entry per week since it began; a price move is never
+  filed as a reason demand moved; and the products and materials a shift reaches are named, with cover
+  before and after genuinely differing.
+- **Shifts vs one-off weeks (4)** — the planted South 316L surge is found as a shift and ranked first;
+  scattered single weeks are *not* called a shift; every flagged series sits in exactly one group;
+  detection is reported in whole weeks (`detectedAfterDays % 7 === 0`).
+- **Decisions move the forecast (3)** — accepting a rise as a new trend raises the forecast and never
+  lowers it; ignoring it as a one-off lowers it; either way the anomaly stays visible with its new
+  status.
+- **Only the past is shown (3)** — the shift chart, the price index and the order book all stop at the
+  last week that has actually happened.
+- **Material prices (2)** — molybdenum flags as rising *and* urgent (low stock, long lead); a material
+  already in excess is never told to buy ahead.
+- **Demand outlook (1)** — the South 316L surge is the biggest rise ahead.
+
+### `engine/consistency.test.ts` — 16 tests
+
+Cross-screen agreement: the anomaly badge equals the number of **Shift** groups and loses no series,
+the exception queue matches its own filters, and `kpis.serviceLevelPct` equals
+`replay.after.serviceLevelPct`.
+
+### `engine/scenario.test.ts` — 11 tests · `ui/nav.test.ts` — 11 tests
+
+What-if levers and costed options; then every sidebar destination against the routes `App.tsx` actually
+serves, so a screen cannot be moved without its links being updated.
+
+### `screens/render.test.tsx` — 90 tests
+
+Mounts **all 14 screens** in jsdom and asserts they paint with the right number of sized charts and
+real drawn geometry, then re-mounts the heaviest four **six weeks advanced**. Also: no screen renders
+`NaN`, `undefined`, `Infinity`, a fractional count of a countable item or a cover figure in the
+thousands of days; every screen still paints in dark mode; no SVG attribute is ever handed a CSS
+variable; deep links (`?m=`, `?s=`, `?r=`) resolve and a non-existent id does not crash; the role rules
+on Buy hold; and Connected systems reads its record counts off the dataset rather than restating them.
+
+A suite named **every control does something** is the answer to the dead controls found on Connected
+systems: it asserts the manual feed offers its upload rather than a disabled "Sync now", that its counts
+do not treat an on-demand feed as a broken one, and that every chain box carrying hover styling is
+genuinely a link or an enabled button. Alongside it: that the write-back queue is gone but the outbound
+systems are still described, that `/setup?tab=alerts` lands on the alert rules, that `/setup` still
+opens on Parameters, and that the uploader has **no** `accept` filter — which is what kept a PDF, a
+photo or a video off the feed — while still saying which file types can move the forecast.
+
+A suite named **the anomaly detail view** opens the first shift and asserts the drawer still answers all
+seven questions in one place, that several open shifts appear as cards first (including the ones nothing
+explains), and that the explanation has not buried the decision buttons.
+
+A further suite, **the summary screens**, walks Health and Exceptions tab by tab — clicking each Tabs
+button and re-checking the chart count — because both screens moved most of their content behind tabs
+and a first-paint count cannot see a chart that collapses on the Cash tab. It also holds the two claims
+worth holding: that Health's lead panel prints the same figures its tiles do, and that Health and
+Exceptions name the **same** item as the one to do first.
+
+### `ui/charts.test.tsx` — 8 tests · `ui/colors.test.ts` — 4 tests
 
 Charts draw real geometry and axis ticks. Palette values are literal colours, light and dark differ, six distinct series colours per theme, and **no SVG attribute anywhere in the UI is handed a CSS variable**.
 
@@ -1165,92 +1540,77 @@ Charts draw real geometry and axis ticks. Palette values are literal colours, li
 
 ## 15. Live numbers from a real run
 
-Captured by running the engine on 23 October 2026, default settings, `weeksAdvanced: 0`.
+Captured by running the engine on 27 October 2026, default settings, `weeksAdvanced: 0`.
 
 ### Performance
 | | |
 |---|---|
-| Full planning run | **~590 ms** |
+| Full planning run | **~520 ms** |
 | Model fits per run | 2,880 (+ 960 refits) |
 
 ### Forecast accuracy
 | | |
 |---|---|
-| DemandPilot (volume-weighted) | **88.8%** |
+| DemandPilot (volume-weighted) | **88.7%** |
 | Three-month average | **84.3%** |
-| **Gain** | **+4.5 points** |
-| Bias | −3.3% (runs slightly low) |
+| **Gain** | **+4.4 points** |
+| Bias | −3.1% (runs slightly low) |
 
 ### Model mix across 240 products
 | Model | Count | Share |
 |---|---|---|
-| Ridge regression | **147** | 61% |
-| Seasonal naive | 65 | 27% |
-| Holt-Winters | 25 | 10% |
+| Ridge regression | **155** | 65% |
+| Seasonal naive | 56 | 23% |
+| Holt-Winters | 26 | 11% |
 | Look-alike | 3 | 1% |
 
 ### Planning position
 | | |
 |---|---|
-| Open anomalies | 189 |
+| Open demand shifts *(what the badge counts)* | **1** |
+| Flagged series behind them | 189 |
 | Materials at risk | 2 |
 | Materials overstocked | 6 |
 | Inventory health | 89 / 100 |
-| Stock value | ₹892.83 Cr |
+| Stock value | ₹892.47 Cr |
+| Releasable cash | ₹40.65 Cr |
 | Open recommendations | 8 (2 buys, 6 reductions) |
+
+The gap between **1** and **189** is the whole point of the grouping work: 189 product × region series
+are genuinely unusual, but they are *one decision* — South 316L has stepped up — and the badge now
+says so.
 
 ### The story, verified
 | | |
 |---|---|
-| South 316L anomalies found | **28** |
-| Largest | SS-316L-HR-1.0-BA at **+70.4%**, caught after **3 days** |
-| Ferromolybdenum | **22.6 days** cover · **Stockout risk** · order-by **−36 days** |
-| Ferrochrome (HC) | **97 days** cover · **Excess** · **₹35.98 Cr** releasable |
+| South 316L anomalies found | **28** products, grouped into **1 shift** |
+| Largest | SS-316L-HR-1.0-BA at **+70.4%**, spotted **in the week it began** |
+| Ferromolybdenum | **21.1 days** cover · **Stockout risk** · order-by **−37.5 days** |
+| Ferrochrome (HC) | **96 days** cover · **Excess** · **₹35.41 Cr** releasable |
 
 ### The replay — 16 weeks, two methods
 | Measure | Spreadsheet | DemandPilot | |
 |---|---|---|---|
-| Stockout weeks | 71 | **3** | ✅ |
-| Materials short | 22 | **3** | ✅ |
-| Line-stop days *(total across all lines)* | 171 | **7** | ✅ |
-| Service level *(by value)* | 88.7% | **99.3%** | ✅ |
-| Production stopped | ₹1,272 Cr | **₹113 Cr** | ✅ |
-| Average stock | **₹305.2 Cr** | ₹627.8 Cr | ⚠️ |
-| Days of inventory | **20.9** | 38.6 | ⚠️ |
-| Storage cost | **₹16.91 Cr** | ₹34.77 Cr | ⚠️ |
+| Stockout weeks | 80 | **3** | ✅ |
+| Materials short | 25 | **3** | ✅ |
+| Line-stop days *(total across all lines)* | 184 | **7** | ✅ |
+| Service level *(by value)* | 88.1% | **99.2%** | ✅ |
+| Production stopped | ₹1,813 Cr | **₹169 Cr** | ✅ |
+| Average stock | **₹310.2 Cr** | ₹650.1 Cr | ⚠️ |
+| Days of inventory | **20.3** | 38.3 | ⚠️ |
+| Storage cost | **₹17.18 Cr** | ₹36.00 Cr | ⚠️ |
 | Signal → order | 38 days | **6 days** | ✅ |
 
-**The trade, stated plainly:** DemandPilot costs **₹17.86 Cr more** to hold stock over the 16 weeks,
-and that cover protects **₹1,159 Cr** of production the old method could not make — a return of
-roughly **65×**. It does *not* win on inventory, and the page leads with that rather than burying it.
-The genuine inventory reduction lives elsewhere: the ₹57.23 Cr of excess the live plan flags on
-`/stock` for release.
-
-### Why DemandPilot cannot hold less here
-
-This was re-tuned rather than assumed. Three genuine reductions were applied — a shorter ordering
-cycle (3 → 2 weeks), an excess ceiling, and removal of the forecast's perfect foresight — which took
-average stock from ₹741 Cr to ₹628 Cr. The remaining gap is arithmetic, not policy:
-
-| | Nickel cathode (RM-104) |
-|---|---|
-| Lead time | **35 days** |
-| Opening cover, both methods | 62 days |
-| Old rule reorders at | **14 days** — cannot be replaced before it runs out |
-| DemandPilot reorders at | 53 days (lead time + buffer + safety stock) |
-| Old-way cover by week | 55 48 41 34 27 20 13 7 **0 0 0** 15 7 **0 0 0** |
-| DemandPilot cover by week | 55 48 41 59 53 46 60 53 46 60 53 46 61 54 47 40 |
-
-Nickel alone was ₹277 Cr of the original ₹394 Cr gap, and the top five materials were ₹387 Cr of it —
-all long-lead, high-value and critical. The old method's lower average inventory is not efficiency; it
-is the arithmetic consequence of sitting at zero for 6 of 16 weeks.
+**The trade, stated plainly:** DemandPilot costs **₹18.82 Cr more** to hold stock over the 16 weeks,
+and that cover protects **₹1,644 Cr** of production the old method could not make — a return of
+roughly **87×**. It does *not* win on inventory, and the page leads with that rather than burying it.
 
 ### Auto-written overview insights
 
-> • South demand for grade 316L is running about 26% above forecast across 28 products, detected 3 days after it began.
-> • Ferromolybdenum has 23 days of cover against a 11-day run to the safety level, and a six-week import lead time.
-> • Top action: expedite 129.00 t of Ferromolybdenum from Supplier C — Specialty Alloys, order within 0 days.
-> • Ferrochrome (high carbon) is carrying 97 days of cover — about ₹35.98 Cr that could be released.
+> • South demand for grade 316L is running about 26% above forecast across 28 products, spotted in the week it began.
+> • Ferromolybdenum has 21 days of cover against a 10-day run to the safety level, and a six-week import lead time.
+> • Top action: expedite 167.0 t of Ferromolybdenum from Supplier C — Specialty Alloys, order today.
+> • Ferrochrome (high carbon) is carrying 96 days of cover — about ₹35.41 Cr that could be released.
 > • Across 240 products and 4 regions, 2 materials need attention and 6 are overstocked.
 
 ---
@@ -1338,7 +1698,7 @@ win — see §15.
 
 ## Summary
 
-The thing that makes this codebase work is a single architectural decision: **one calculation feeds everything.** `runPlanning()` is the only source of displayed numbers, so consistency across thirteen screens is structural rather than maintained by hand.
+The thing that makes this codebase work is a single architectural decision: **one calculation feeds everything.** `runPlanning()` is the only source of displayed numbers, so consistency across fourteen screens is structural rather than maintained by hand.
 
 The second-best decision is that the story lives in the generated *history*, not in the screens. Because South 316L genuinely steps up in the data, and because 316L is genuinely the only grade containing molybdenum, the chain from market signal to anomaly to material shortage to expedite recommendation is **derived** rather than scripted. Change the anomaly threshold and the chain genuinely changes.
 

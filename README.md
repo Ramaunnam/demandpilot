@@ -2,7 +2,7 @@
 
 **Demand-Driven Material Planning — a working proof of concept.**
 
-Predict demand across 240 products and 4 regions, catch unusual changes within days, turn the plan into
+Predict demand across 240 products and 4 regions, catch unusual changes in the week they appear, turn the plan into
 exact material needs, set reorder levels automatically, and recommend what to buy and by when —
 all from one data set, on one dashboard.
 
@@ -43,9 +43,12 @@ part of the same story, and all of it comes from the same calculation.
 
 1. **A market signal arrives.** New pharmaceutical and food-processing plants are announced in the
    South region. Those buyers specify grade 316L.
-2. **Demand moves.** South-region 316L starts running about 35% above forecast.
-3. **The anomaly is caught in days**, not weeks. A three-month average — the old method — would not
-   have shown the shift for roughly five more weeks.
+2. **Demand moves.** South-region 316L starts running about 35% above forecast — and it is not the only
+   thing moving. Five shifts are open in the demo week, three up and two down, and one of them has no
+   signal behind it at all, so the screen has to say so rather than reaching for the nearest cause.
+3. **The anomaly is caught in the week it began**, not five weeks later, which is when a three-month
+   average — the old method — would first have shown it. The 28 affected products are grouped into
+   **one shift to decide on**, not 28 rows to wade through.
 4. **The knock-on effect.** 316L is the only grade that uses molybdenum, which has a 42-day import
    lead time. At the new demand level, cover runs out before a normal order could arrive.
 5. **The reorder level moves up by itself**, because usage and variability rose. MRP recalculates,
@@ -72,11 +75,12 @@ Start the **tour** from the top bar to walk this in 8 steps.
 | ID | Capability | Screen | What actually happens |
 |---|---|---|---|
 | **K1** | ML-based demand forecasting | `/forecast`, `/models` | Seasonal naive, Holt-Winters and a ridge regression are each fitted and tested on held-out weeks; the winner is kept per product and region |
-| **K2** | Anomaly detection | `/anomalies` | Rolling z-score against a seasonally-adjusted expectation, with a commercial-materiality filter |
+| **K2** | Anomaly detection | `/anomalies` | Rolling z-score against a seasonally-adjusted expectation, with a commercial-materiality filter; real shifts separated from one-off weeks, and a decision on one changes the next forecast |
 | **K3** | Dynamic reorder and safety stock | `/stock` | `SS = Z × √(LT·σd² + d²·σLT²)`, recalculated every run; the old fixed rule is shown beside it |
 | **K4** | Automated MRP generation | `/plan` | Forecast → capacity-constrained plan → BOM explosion → netting → lot sizing → lead-time offset |
 | **K5** | Procurement guidance | `/buy` | Quantity, supplier, order-by date, confidence, signals, alternatives, and what happens if ignored |
-| **K6** | End-to-end planning visibility | `/` | Chain rail on Health links every stage from signal to delivered order |
+| **K6** | End-to-end planning visibility | `/` | Chain rail on Health links every stage from signal to delivered order, under a lead panel that states the week in a sentence and names what to do first |
+| **K7** | Source-system integration | `/connected` | 9 feeds with freshness targets, field mappings and a write-back queue — nothing reaches the ERP until a person sends it |
 
 The five problems from the case study (C1–C5) are each mapped to the screen that solves them on the
 **Why** tab of `/proof`.
@@ -113,6 +117,32 @@ same-week-last-year seasonal ratio. A rolling z-score above the planner's thresh
 Consecutive flagged weeks group into one episode. An episode is only reported if it is **both**
 statistically unusual (z above threshold) **and** commercially material (≥14% gap and enough tonnes to
 matter) — which keeps small-volume products from dominating the list.
+
+Flagged series are then grouped into what a planner actually decides on. A **shift** needs three or
+more products unusual for two or more consecutive weeks, at the same time, and still running — one real
+market change in a grade and region, not sixty separate rows. Everything else is listed as **one-off
+weeks**. Nothing is hidden: every flagged series sits in exactly one group. Detection is reported in
+whole weeks, because the data is weekly.
+
+Deciding on a group **changes the next run**: *ignore as one-off* takes those weeks out of what the
+models learn from, and *accept as new trend* moves the forecast to the level the product is now selling
+at. Anomalies are therefore detected before the forecast is fitted, not after.
+
+### `briefing.ts`
+
+Read-only derivations behind Health and Exceptions: the week stated in a sentence with the one item to
+start with, where the stock value sits by status, the spend-against-release cash position, the replay
+scorecard, and the queue roll-ups — which subjects appear more than once, what each queue is worth,
+and how sure the engine is. `rankQueue()` lives here too, which is why Health and Exceptions name the
+same item as the one to do first instead of each sorting its own way.
+
+### `insights.ts`
+
+Read-only derivations behind the Anomalies screen: the next-8-vs-last-8 demand outlook per grade and
+region, material price direction and urgency from the nickel / moly / ferrochrome index, customers
+ordering outside their own normal, and the largest recent orders against what is typical. Every
+function reads only weeks that have already happened, so the hidden future weeks the simulator uses
+cannot leak into what the planner sees.
 
 ### `inventory.ts`
 
@@ -215,12 +245,13 @@ in the interface or the data.
 ```
 src/
   data/      types, hand-written catalogue (materials, suppliers, BOM), seeded generator
-  engine/    forecast · anomaly · inventory · mrp · procurement · scenario · replay + tests
+  engine/    forecast · anomaly · inventory · mrp · procurement · scenario · replay
+             insights · briefing (read-only derivations) · selectors + tests
   worker/    runs the whole planning calculation off the main thread
   store/     Zustand state: settings, approvals, overrides, role, theme, demo controls
   ui/        kit (tiles, chips, meters, drawers) · Table · charts · Shell · Palette · Tour
   content/   glossary
-  screens/   13 screens
+  screens/   14 screens
   lib/       formatting, CSV, seeded RNG, view helpers
 ```
 
@@ -234,7 +265,7 @@ definitions. Detail opens in a side drawer rather than a separate page, so you n
 
 | | |
 |---|---|
-| Screens | 13, each opening on a chart rather than a wall of text |
+| Screens | 14, each opening on a chart rather than a wall of text |
 | Nav groups | Overview · Demand · Supply · Buy · Decide |
 | Status vocabulary | healthy · reorder now · stockout risk · excess (plus severity) |
 | Theme | light and dark, semantic tokens |

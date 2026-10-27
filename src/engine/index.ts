@@ -226,11 +226,53 @@ export function runPlanning(inp: RunInput): PlanningResult {
     }
   }
 
-  // ---- 1. Forecast every SKU × region --------------------------------------
-  const skuForecasts: SkuForecast[] = []
-  const modelCounts: Record<string, number> = {}
   const demandIndex = new Map<string, number[]>()
   for (const d of ds.demand) demandIndex.set(`${d.skuId}|${d.region}`, d.weeks)
+
+  // ---- 1. Anomalies ---------------------------------------------------------
+  // Found first, on the raw history, because the planner's decisions on them
+  // feed the forecast below. Detection itself always looks at raw sales, so a
+  // decided anomaly stays visible with its decision.
+  const anomalies: Anomaly[] = []
+  for (const sku of ds.skus) {
+    const matIds = (ds.bom[sku.id] ?? []).map(b => b.materialId)
+    const relevantSignals = ds.signals
+      .filter(s => s.kind === 'Demand' && (s.grades.length === 0 || s.grades.includes(sku.grade)))
+      .map(s => ({ id: s.id, week: s.week, title: s.title, effectPct: s.effectPct }))
+    for (const region of REGIONS) {
+      const hist = (demandIndex.get(`${sku.id}|${region}`) ?? []).slice(0, histLen)
+      if (!hist.length) continue
+      anomalies.push(...detectAnomalies({
+        skuId: sku.id, skuCode: sku.code, grade: sku.grade, region,
+        history: hist, pricePerT: sku.pricePerT,
+        materialIds: matIds,
+        signals: relevantSignals.filter(s => {
+          const sig = ds.signals.find(x => x.id === s.id)!
+          return sig.regions.length === 0 || sig.regions.includes(region)
+        }),
+        threshold: settings.anomalyThreshold,
+        resolutions: inp.anomalyResolutions,
+      }))
+    }
+  }
+  anomalies.sort((a, b) => b.startWeek - a.startWeek || Math.abs(b.deltaPct) - Math.abs(a.deltaPct))
+
+  // Planner decisions, per product × region, applied in the forecast below.
+  //  · One-off: the flagged weeks are swapped for what was expected, so the
+  //    models stop learning from them.
+  //  · New trend: the forecast is moved to the level the product is actually
+  //    selling at now, if the models have not already got there.
+  // Before this, both buttons only changed a label — nothing downstream moved.
+  const decided = new Map<string, Anomaly[]>()
+  for (const a of anomalies) {
+    if (a.status !== 'Ignored as one-off' && a.status !== 'Accepted as new trend') continue
+    const k = `${a.skuId}|${a.region}`
+    decided.set(k, [...(decided.get(k) ?? []), a])
+  }
+
+  // ---- 2. Forecast every SKU × region --------------------------------------
+  const skuForecasts: SkuForecast[] = []
+  const modelCounts: Record<string, number> = {}
 
   for (const sku of ds.skus) {
     const byRegion = {} as Record<RegionName, number[]>
@@ -245,13 +287,28 @@ export function runPlanning(inp: RunInput): PlanningResult {
       const history = hist.slice(0, histLen)
       const sig = signalLookup.get(`${sku.id}|${region}`)!
       const ov = inp.overrides.find(o => o.skuId === sku.id && (o.region === region || o.region === 'All'))
+      const choices = decided.get(`${sku.id}|${region}`) ?? []
+      for (const a of choices) {
+        if (a.status !== 'Ignored as one-off') continue
+        for (let w = a.startWeek; w < a.startWeek + a.weeksRunning && w < history.length; w++) history[w] = a.expected
+      }
 
-      const r = forecastSeries({
+      let r = forecastSeries({
         skuId: sku.id, region, history,
         priceIndex, signalFlag: sig.flags, horizon,
         signalUpliftPct: sig.uplift,
         overridePct: ov?.pct,
       })
+      const trend = choices.filter(a => a.status === 'Accepted as new trend')
+        .sort((x, y) => y.startWeek - x.startWeek)[0]
+      if (trend && r.forecast.length) {
+        const now = mean(r.forecast.slice(0, 4))
+        const behind = trend.deltaT > 0 ? trend.actual > now : trend.actual < now
+        if (now > 0 && behind) {
+          const f = clamp(trend.actual / now, 0.5, 2)
+          r = { ...r, forecast: r.forecast.map(v => v * f), lower: r.lower.map(v => v * f), upper: r.upper.map(v => v * f) }
+        }
+      }
       regionResults[region] = r
       byRegion[region] = r.forecast
       total = total.map((v, i) => v + r.forecast[i])
@@ -301,31 +358,6 @@ export function runPlanning(inp: RunInput): PlanningResult {
       for (const r of REGIONS) forecastByRegion[r][i] += f.byRegion[r][i]
     }
   }
-
-  // ---- 2. Anomalies ---------------------------------------------------------
-  const anomalies: Anomaly[] = []
-  for (const sku of ds.skus) {
-    const matIds = (ds.bom[sku.id] ?? []).map(b => b.materialId)
-    const relevantSignals = ds.signals
-      .filter(s => s.kind === 'Demand' && (s.grades.length === 0 || s.grades.includes(sku.grade)))
-      .map(s => ({ id: s.id, week: s.week, title: s.title, effectPct: s.effectPct }))
-    for (const region of REGIONS) {
-      const hist = (demandIndex.get(`${sku.id}|${region}`) ?? []).slice(0, histLen)
-      if (!hist.length) continue
-      anomalies.push(...detectAnomalies({
-        skuId: sku.id, skuCode: sku.code, grade: sku.grade, region,
-        history: hist, pricePerT: sku.pricePerT,
-        materialIds: matIds,
-        signals: relevantSignals.filter(s => {
-          const sig = ds.signals.find(x => x.id === s.id)!
-          return sig.regions.length === 0 || sig.regions.includes(region)
-        }),
-        threshold: settings.anomalyThreshold,
-        resolutions: inp.anomalyResolutions,
-      }))
-    }
-  }
-  anomalies.sort((a, b) => b.startWeek - a.startWeek || Math.abs(b.deltaPct) - Math.abs(a.deltaPct))
 
   // ---- 3. Material requirements and stock health ---------------------------
   const skuForecastMap = new Map(skuForecasts.map(f => [f.skuId, f.total]))
@@ -531,8 +563,10 @@ export function runPlanning(inp: RunInput): PlanningResult {
   // fires the detector in every affected product, so 316L alone can produce
   // dozens of rows for a single decision. See groupAnomalies().
   const openAnoms_ = anomalies.filter(a => a.status === 'Open')
-  const openAnomGroups = groupAnomalies(openAnoms_)
-  const openAnomCount = openAnomGroups.length
+  const openAnomGroups = groupAnomalies(openAnoms_, histLen - 1)
+  // The badge counts real shifts. One-off weeks are still listed, and still
+  // counted in openAnomalySeries, but they are not each a decision.
+  const openAnomCount = openAnomGroups.filter(g => g.kind === 'Shift').length
   const riskCount = materials.filter(m => m.inv.status === 'Stockout risk').length
   const reorderCount = materials.filter(m => m.inv.status === 'Reorder now').length
   const excessCount = materials.filter(m => m.inv.status === 'Excess').length
@@ -551,7 +585,7 @@ export function runPlanning(inp: RunInput): PlanningResult {
     spreadsheetAccuracyPct: +ssAccuracy.toFixed(1),
     openAnomalies: openAnomCount,
     openAnomalySeries: openAnoms_.length,
-    highAnomalies: openAnomGroups.filter(g => g.severity === 'High').length,
+    highAnomalies: openAnomGroups.filter(g => g.kind === 'Shift' && g.severity === 'High').length,
     materialsAtRisk: riskCount + reorderCount,
     stockoutRiskCount: riskCount,
     reorderNowCount: reorderCount,
@@ -608,8 +642,8 @@ export function runPlanning(inp: RunInput): PlanningResult {
       title: `Unusual demand: grade ${g.grade} in ${g.region}`,
       subject: `${g.grade} · ${g.region}`, subjectId: g.id, subjectKind: 'sku',
       recommendedAction: g.suggestedAction,
-      reason: `${g.direction} by ${Math.abs(g.avgDeltaPct).toFixed(0)}% across ${g.products} product${g.products === 1 ? '' : 's'} for ${g.weeksRunning} week(s). ${g.likelyCause}`,
-      confidence: Math.round(clamp(45 + peakZ * 11 + g.weeksRunning * 7, 40, 95)),
+      reason: `${g.direction} by ${Math.abs(g.avgDeltaPct).toFixed(0)}% across ${g.products} product${g.products === 1 ? '' : 's'}, ${g.sustainedProducts} of them for 2+ weeks running. ${g.likelyCause}`,
+      confidence: g.confidence,
       signals: [
         { name: 'Size of gap', weight: clamp(Math.abs(g.avgDeltaPct) / 60, 0.1, 0.98), value: `${g.avgDeltaPct > 0 ? '+' : ''}${g.avgDeltaPct.toFixed(0)}%` },
         { name: 'Products affected', weight: clamp(g.products / 20, 0.15, 0.98), value: `${g.products}` },
@@ -689,7 +723,7 @@ export function runPlanning(inp: RunInput): PlanningResult {
   const insights: Record<string, string[]> = {
     overview: [
       storyAnom.length
-        ? `${STORY.anomalyRegion} demand for grade ${STORY.anomalyGrade} is running about ${Math.abs(mean(storyAnom.map(a => a.deltaPct))).toFixed(0)}% above forecast across ${storyProducts} product${storyProducts > 1 ? 's' : ''}, detected ${Math.min(...storyAnom.map(a => a.detectedAfterDays))} days after it began.`
+        ? `${STORY.anomalyRegion} demand for grade ${STORY.anomalyGrade} is running about ${Math.abs(mean(storyAnom.map(a => a.deltaPct))).toFixed(0)}% above forecast across ${storyProducts} product${storyProducts > 1 ? 's' : ''}, spotted ${Math.min(...storyAnom.map(a => a.detectedAfterWeeks)) === 0 ? 'in the week it began' : `${Math.min(...storyAnom.map(a => a.detectedAfterWeeks))} week(s) after it began`}.`
         : `No unusual demand above the ${settings.anomalyThreshold} threshold this week.`,
       storyMat
         ? `${storyMat.name} has ${storyMat.inv.daysOfCover.toFixed(0)} days of cover against a ${storyMat.inv.daysToSafetyBreach > 0 ? storyMat.inv.daysToSafetyBreach.toFixed(0) : '0'}-day run to the safety level, and a ${storyMat.inv.daysOfCover < 45 ? 'six-week' : 'long'} import lead time.`

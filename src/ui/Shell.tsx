@@ -3,10 +3,11 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   Activity, ListChecks, TrendingUp, Radio, AlertTriangle, Boxes, Factory,
   ShoppingCart, FileText, SlidersHorizontal, Trophy, Settings as Cog, Search,
-  Moon, Sun, FastForward, PanelLeftClose, PanelLeft, Play,
+  Moon, Sun, FastForward, PanelLeftClose, PanelLeft, Play, Network,
 } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import { selectExceptions, selectDecidedRecIds, selectOpenRecommendationCount } from '@/engine/selectors'
+import Logo from './Logo'
 import WeekMenu from './WeekMenu'
 
 interface Item { to: string; label: string; icon: React.ElementType; badge?: 'ex' | 'an' | 'buy' | 'risk' }
@@ -31,6 +32,7 @@ export const NAV: { group: string; items: Item[] }[] = [
   ]},
   { group: 'Decide', items: [
     { to: '/simulate', label: 'Simulate', icon: SlidersHorizontal },
+    { to: '/connected', label: 'Connected systems', icon: Network },
     { to: '/proof', label: 'Proof', icon: Trophy },
   ]},
 ]
@@ -65,17 +67,11 @@ function Side() {
   return (
     <aside className={`no-print shrink-0 border-r border-line bg-surface transition-all duration-200
       ${sidebarOpen ? 'w-52' : 'w-[52px]'} h-screen sticky top-0 overflow-y-auto overflow-x-hidden`}>
-      <div className="h-12 flex items-center gap-2 px-3 border-b border-line sticky top-0 bg-surface z-20">
-        <div className="w-7 h-7 rounded-lg bg-primary text-primary-fg grid place-items-center font-bold text-sm shrink-0">DP</div>
-        {sidebarOpen && (
-          <div className="min-w-0">
-            <div className="text-base font-bold leading-tight truncate">DemandPilot</div>
-            <div className="text-2xs text-muted leading-tight">by J2W</div>
-          </div>
-        )}
+      <div className="h-12 flex items-center px-3 border-b border-line sticky top-0 bg-surface z-20">
+        <Logo compact={!sidebarOpen} />
       </div>
 
-      {/* Tight enough that all thirteen destinations fit without scrolling. */}
+      {/* Tight enough that all twelve destinations fit without scrolling. */}
       <nav className="p-1.5 pb-3 select-none">
         {NAV.map(g => (
           <div key={g.group} className="mb-1">
@@ -118,23 +114,24 @@ function Top() {
 
       <button onClick={() => setCommandOpen(true)}
         className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-line bg-surface2
-                   text-sm text-muted hover:bg-line/30 transition-colors w-36 sm:w-56">
-        <Search className="w-3 h-3" /><span className="truncate">Search</span>
+                   text-sm text-muted hover:bg-line/30 transition-colors w-9 shrink-0 sm:w-56" aria-label="Search">
+        {/* Icon-only on a phone: the full bar plus seven controls ran 400 px past the screen edge. */}
+        <Search className="w-3 h-3 shrink-0" /><span className="truncate hidden sm:inline">Search</span>
         <kbd className="ml-auto hidden sm:inline text-2xs px-1 rounded border border-line bg-surface">⌘K</kbd>
       </button>
 
-      <div className="flex-1" />
+      <div className="flex-1 min-w-0" />
 
       <WeekMenu />
 
       <button className="btn btn-outline btn-sm" onClick={advanceWeek} disabled={loading} title="Advance one week">
         <FastForward className="w-3.5 h-3.5" /><span className="hidden lg:inline">+1 week</span>
       </button>
-      <button className="btn btn-ghost btn-sm" onClick={toggleDark} title="Theme">
+      <button className="btn btn-ghost btn-sm hidden sm:inline-flex" onClick={toggleDark} title="Theme">
         {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
       </button>
       <NavLink to="/setup" title="Settings" aria-label="Settings"
-        className={({ isActive }) => `btn btn-sm ${isActive ? 'btn-soft' : 'btn-ghost'}`}>
+        className={({ isActive }) => `btn btn-sm hidden sm:inline-flex ${isActive ? 'btn-soft' : 'btn-ghost'}`}>
         <Cog className="w-4 h-4" />
       </NavLink>
 

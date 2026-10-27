@@ -7,7 +7,7 @@ import { useStore } from '@/store/useStore'
 export const TOUR = [
   { to: '/', t: 'One dashboard', b: 'Forecast, materials and purchases all from the same calculation.' },
   { to: '/signals', t: 'A signal arrives', b: 'New pharma plants announced in the South. Those buyers specify 316L.' },
-  { to: '/anomalies', t: 'Caught in days', b: 'South 316L is running above forecast. Flagged three days in, not five weeks.' },
+  { to: '/anomalies', t: 'Caught in days', b: 'South 316L is running above forecast. Flagged in the week it showed up, not five weeks later.' },
   { to: '/forecast?tab=accuracy', t: 'Why trust it', b: 'Three models fitted per product; the one that back-tested best is kept.' },
   { to: '/stock', t: 'The knock-on', b: '316L needs molybdenum — six-week lead, and the order-by date has passed.' },
   { to: '/plan', t: 'Plan to materials', b: 'Run MRP: forecast, capacity, recipes, netting, planned orders.' },

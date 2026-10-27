@@ -43,14 +43,16 @@ export function Chart({ title, right, h = 200, children, note }: {
   title?: string; right?: ReactNode; h?: number; children: ReactNode; note?: string
 }) {
   return (
-    <section className="card pad">
+    // min-w-0: inside a grid, the 560 px first-paint size below otherwise
+    // stretches the column and pushes the page wider than a phone screen.
+    <section className="card pad min-w-0">
       {(title || right) && (
         <header className="flex items-center justify-between gap-2 mb-1.5">
           {title && <h3 className="h2">{title}</h3>}
           {right && <div className="flex items-center gap-1.5 shrink-0">{right}</div>}
         </header>
       )}
-      <div style={{ height: h, minHeight: h, width: '100%' }}>
+      <div style={{ height: h, minHeight: h, width: '100%', minWidth: 0, overflow: 'hidden' }}>
         {/* initialDimension gives the first paint a real box. Without it the
             container renders once at 0x0, Recharts draws nothing, and the chart
             only appears after the ResizeObserver fires a frame later. */}
@@ -347,8 +349,8 @@ export function Donut({ data, fmt, width, height }: {
 }
 
 /** CSS heatmap — products × regions at a glance. Inline style, so variables are fine here. */
-export function Heat({ rows, cols, get, onCell, fmt }: {
-  rows: string[]; cols: string[]
+export function Heat({ rows, cols, get, onCell, fmt, corner = 'Product' }: {
+  rows: string[]; cols: string[]; corner?: string
   get: (r: string, c: string) => number | null
   onCell?: (r: string, c: string) => void
   fmt?: (v: number) => string
@@ -366,7 +368,7 @@ export function Heat({ rows, cols, get, onCell, fmt }: {
       <table className="border-collapse">
         <thead>
           <tr>
-            <th className="th sticky left-0 z-20">Product</th>
+            <th className="th sticky left-0 z-20">{corner}</th>
             {cols.map(c => <th key={c} className="th text-center min-w-[62px]">{c}</th>)}
           </tr>
         </thead>

@@ -420,7 +420,7 @@ export default function Simulate() {
               <Save className="w-4 h-4" /> Save to history
             </button>
             <div className="flex-1" />
-            <Chip tone="neutral">service level measured over the last {16} weeks, same as Proof</Chip>
+            <Chip tone="neutral" className="whitespace-normal h-auto py-0.5">service level measured over the last {16} weeks, same as Proof</Chip>
           </div>
         </>
       )}

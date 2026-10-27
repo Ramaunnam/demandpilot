@@ -48,12 +48,93 @@ export const TOTAL_WEEKLY_TONNES = 3800
  */
 export const WOY_OFFSET = 44
 
-/** The three weeks over which the South 316L shift happened. */
+export interface ScriptedShift {
+  id: string
+  grade: Grade
+  region: RegionName
+  /** Narrow a shift to certain forms, so it need not move a whole grade. */
+  forms?: Form[]
+  startWeek: number
+  /** Size of the move, positive or negative. */
+  uplift: number
+  /** Share of the uplift reached in each week from startWeek. The last value holds. */
+  ramp: number[]
+  /** Whether a market signal in the history explains it. */
+  explained: boolean
+  note: string
+}
+
+/**
+ * Market shifts planted in the history.
+ *
+ * The first is the demo's narrative, and is deliberately the largest and the
+ * widest: it has to stay at the top of the Anomalies screen, which ranks on
+ * severity and then on how many products moved.
+ *
+ * The rest exist because one shift is not what a planner's week looks like.
+ * Several things move at once, in both directions, and only some of them have
+ * a signal behind them — the East 430 drop is deliberately unexplained, so the
+ * screen has to say "no matching market signal found" rather than always
+ * producing a tidy cause.
+ *
+ * Each ramp holds its final value into the forward weeks, because these are
+ * changes in the market rather than blips. That is what makes them shifts.
+ */
+export const SHIFTS: ScriptedShift[] = [
+  {
+    id: 'SHIFT-316L-SOUTH', grade: '316L', region: 'South',
+    startWeek: TODAY_WEEK - 3, uplift: 0.35, ramp: [0.72, 1.0, 1.12],
+    explained: true,
+    note: 'Pharmaceutical and food-processing plants announced in the South specify 316L.',
+  },
+  {
+    id: 'SHIFT-201-NORTH', grade: '201', region: 'North',
+    startWeek: TODAY_WEEK - 4, uplift: 0.3, ramp: [0.55, 0.85, 1.0, 1.06],
+    explained: true,
+    note: 'Metro and railway coach orders released to fabricators in the North.',
+  },
+  {
+    id: 'SHIFT-304-WEST', grade: '304', region: 'West', forms: ['Sheet'],
+    startWeek: TODAY_WEEK - 3, uplift: 0.26, ramp: [0.68, 1.0, 1.06],
+    explained: true,
+    note: 'Architectural cladding projects cleared for release in the West.',
+  },
+  /**
+   * Deliberately unexplained, and deliberately against a signal.
+   *
+   * Every 316L signal in the history points up — one of them (SIG-024) says
+   * West 316L specifically should rise. It falls instead. So the screen has to
+   * report a drop that no signal accounts for, next to a signal that predicted
+   * the opposite, which is the case a demo normally avoids.
+   *
+   * It has to be a high-volume grade. 430 and 201 were both tried first and
+   * neither works: a fall drags the recent mean under the detector's
+   * minimum-volume gate, so the series is excluded before it is ever examined.
+   * Only 304 and 316L are big enough to fall and still be seen.
+   */
+  {
+    id: 'SHIFT-316L-WEST', grade: '316L', region: 'West',
+    startWeek: TODAY_WEEK - 4, uplift: -0.26, ramp: [0.5, 0.82, 1.0, 1.0],
+    explained: false,
+    note: 'No signal explains this one, and one signal predicted the opposite.',
+  },
+  // Pharma buyers in the South moving from 304 to 316L is a plausible read of
+  // this. A competitor-capacity signal does match it on grade and sign, but at
+  // a fraction of the size — which the drawer shows rather than hides.
+  {
+    id: 'SHIFT-304-SOUTH', grade: '304', region: 'South', forms: ['Hot-rolled coil', 'Sheet'],
+    startWeek: TODAY_WEEK - 4, uplift: -0.3, ramp: [0.55, 0.85, 1.0, 1.0],
+    explained: false,
+    note: 'No signal explains this one. It is the case the screen has to handle honestly.',
+  },
+]
+
+/** The demo's narrative, which is the first planted shift plus its knock-on. */
 export const STORY = {
-  anomalyStartWeek: TODAY_WEEK - 3,   // 101
-  anomalyGrade: '316L' as Grade,
-  anomalyRegion: 'South' as RegionName,
-  anomalyUplift: 0.35,
+  anomalyStartWeek: SHIFTS[0].startWeek,   // 101
+  anomalyGrade: SHIFTS[0].grade,
+  anomalyRegion: SHIFTS[0].region,
+  anomalyUplift: SHIFTS[0].uplift,
   decliningGrade: '430' as Grade,
   criticalMaterial: 'RM-105',         // Ferromolybdenum
   excessMaterial: 'RM-102',           // Ferrochrome (high carbon)
@@ -225,11 +306,14 @@ function buildDemand(rng: Rng, skus: Sku[]) {
       }
     }
 
-    // ---- THE STORY: South 316L steps up over the last three weeks, and stays
-    // up, because it is a change in the market rather than a blip.
-    if (sku.grade === STORY.anomalyGrade && region === STORY.anomalyRegion && t >= STORY.anomalyStartWeek) {
-      const step = Math.min(t - STORY.anomalyStartWeek, 2)            // 0,1,2
-      v *= 1 + STORY.anomalyUplift * [0.72, 1.0, 1.12][step]
+    // ---- THE PLANTED SHIFTS: real changes in what a region buys, which ramp
+    // in over a few weeks and then stay, rather than spiking and returning.
+    for (const sh of SHIFTS) {
+      if (sku.grade !== sh.grade || region !== sh.region) continue
+      if (sh.forms && !sh.forms.includes(sku.form)) continue
+      if (t < sh.startWeek) continue
+      const step = Math.min(t - sh.startWeek, sh.ramp.length - 1)
+      v *= 1 + sh.uplift * sh.ramp[step]
     }
     return v
   }
@@ -571,6 +655,14 @@ function buildSignals(rng: Rng, weekDates: Date[]): MarketSignal[] {
       sourceType: 'Industry news', kind: 'Demand', regions: ['East'], grades: ['201', '304'], materialIds: [],
       effectPct: 12, confidence: 0.66, severity: 'Medium',
       explanation: 'Rolling-stock interiors use 201 and 304 sheet. Expect East demand to firm from the next quarter.' },
+    { week: TODAY_WEEK - 6, title: 'Metro and railway coach orders released to fabricators in the North region',
+      sourceType: 'Industry news', kind: 'Demand', regions: ['North'], grades: ['201'], materialIds: ['RM-102', 'RM-104'],
+      effectPct: 24, confidence: 0.77, severity: 'Medium',
+      explanation: 'Coach interiors and panelling are specified in 201. Several fabricators in the North have been released to order, so North 201 should run above the old level for as long as the programme lasts.' },
+    { week: TODAY_WEEK - 5, title: 'Architectural cladding projects cleared for release in the West region',
+      sourceType: 'Industry news', kind: 'Demand', regions: ['West'], grades: ['304'], materialIds: ['RM-104', 'RM-102'],
+      effectPct: 19, confidence: 0.73, severity: 'Medium',
+      explanation: 'Cladding and facade work takes 304 sheet rather than coil. The release is for West-region sites, so it lifts one form in one region rather than the whole grade.' },
     { week: TODAY_WEEK - 11, title: 'Acid supplier scheduled plant maintenance for two weeks',
       sourceType: 'Supplier notice', kind: 'Supply', regions: ['South'], grades: [], materialIds: ['RM-118', 'RM-119'],
       effectPct: -30, confidence: 0.88, severity: 'High',

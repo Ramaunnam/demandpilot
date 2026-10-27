@@ -23,6 +23,9 @@ export interface Anomaly {
   startWeek: number
   /** Week our check first had enough evidence to flag it. */
   detectedWeek: number
+  /** Whole weeks between the start and the flag. 0 = flagged at the close of the week it began. */
+  detectedAfterWeeks: number
+  /** detectedAfterWeeks × 7. The data is weekly, so this is never a finer number than that. */
   detectedAfterDays: number
   weeksRunning: number
   expected: number
@@ -152,7 +155,10 @@ export function detectAnomalies(inp: AnomalyInput): Anomaly[] {
       out.push({
         id, skuId: inp.skuId, skuCode: inp.skuCode, grade: inp.grade, region: inp.region,
         startWeek: t, detectedWeek,
-        detectedAfterDays: (detectedWeek - t) * 7 + 3,
+        // Weekly data: we know the week, not the day. (This used to add a fixed
+        // "+3 days", which read as a measurement but was a constant.)
+        detectedAfterWeeks: detectedWeek - t,
+        detectedAfterDays: (detectedWeek - t) * 7,
         weeksRunning: weeks,
         expected: +expected.toFixed(1), actual: +actual.toFixed(1),
         deltaT: +deltaT.toFixed(1), deltaPct: +deltaPct.toFixed(1),
@@ -161,9 +167,7 @@ export function detectAnomalies(inp: AnomalyInput): Anomaly[] {
         status: inp.resolutions[id] ?? 'Open',
         likelyCause: sig
           ? sig.title
-          : deltaPct > 0
-            ? 'No matching market signal. Most likely a single large order or channel stocking.'
-            : 'No matching market signal. Most likely a despatch timing effect or a customer hold.',
+          : 'No matching market signal found.',
         linkedSignalId: sig?.id ?? null,
         affectedMaterialIds: inp.materialIds,
         impactT: +impactT.toFixed(1),
@@ -191,20 +195,26 @@ export const SEVERITY_RANK: Record<AnomalySeverity, number> = { High: 0, Medium:
 // ---------------------------------------------------------------------------
 
 /**
- * One market shift, not one row per product.
+ * What the planner decides on: a real shift, or a pile of one-off weeks.
  *
- * When a region genuinely changes what it buys, the detector finds it in every
- * affected product independently — and it is right to. Grade 316L has 60 SKUs,
- * so a real step-up in the South surfaces as dozens of separate anomalies.
- * Listing them individually turns one decision into sixty rows and makes the
- * open count read as noise rather than signal.
+ * When a region genuinely changes what it buys, the detector fires in every
+ * affected product, and it is right to. Those belong together as ONE decision.
  *
- * So the detection stays exactly as sensitive as it was, and the *queue*
- * collapses by what a planner actually decides on: a grade, in a region, moving
- * in a direction. The per-product evidence is kept inside each group.
+ * But grouping only by grade + region + direction also swept in unrelated
+ * single-week blips from months apart, so normal week-to-week wobble read as
+ * "+38% across 16 products". A shift now has to look like one:
+ *   - it is still running (its last flagged week is within the last 3 weeks),
+ *   - it started recently (within the last 8 weeks), and
+ *   - at least 3 products show it for 2+ weeks in a row, at the same time.
+ * Everything else in that grade/region/direction is "One-off weeks".
+ *
+ * Nothing is suppressed: every series sits in exactly one group.
  */
+export type AnomalyGroupKind = 'Shift' | 'One-off weeks'
+
 export interface AnomalyGroup {
   id: string
+  kind: AnomalyGroupKind
   grade: Grade
   region: RegionName
   direction: Anomaly['direction']
@@ -213,19 +223,104 @@ export interface AnomalyGroup {
   /** Every series behind this group, worst gap first. */
   items: Anomaly[]
   products: number
+  /** Products that were unusual for 2+ weeks in a row. */
+  sustainedProducts: number
   avgDeltaPct: number
+  /** Tonnes per week above (+) or below (−) expected, summed over the products. */
+  weeklyGapT: number
   totalImpactT: number
+  /** Sales value of the gap so far (tonnes × selling price). */
   totalImpactINR: number
+  /** Sales value per week if the gap continues. */
+  weeklyGapINR: number
   /** The fastest detection in the group — how quickly we knew at all. */
+  detectedAfterWeeks: number
   detectedAfterDays: number
   startWeek: number
+  /** Last week any member was flagged. */
+  lastWeek: number
   weeksRunning: number
+  /** How many weeks the members are spread across, first start to last flag. */
+  spanWeeks: number
+  /** How sure we are of the verdict (shift is real / weeks are noise), 0–100. */
+  confidence: number
   likelyCause: string
   linkedSignalId: string | null
   suggestedAction: string
 }
 
-export function groupAnomalies(anomalies: Anomaly[]): AnomalyGroup[] {
+const SHIFT_MIN_SUSTAINED = 3
+const SHIFT_RECENT_WEEKS = 8
+const SHIFT_LIVE_WEEKS = 3
+
+const lastFlagged = (a: Anomaly) => a.startWeek + a.weeksRunning - 1
+
+function makeGroup(kind: AnomalyGroupKind, key: string, items: Anomaly[]): AnomalyGroup {
+  items.sort((x, y) => Math.abs(y.deltaPct) - Math.abs(x.deltaPct))
+  const lead = items[0]
+  const up = lead.direction === 'Above forecast'
+  const products = items.length
+  const sustained = items.filter(i => i.weeksRunning >= 2).length
+  const avgDeltaPct = +(items.reduce((s, i) => s + i.deltaPct, 0) / products).toFixed(1)
+  // A shift starts when products began moving TOGETHER (the first 2+ week
+  // run), not at the earliest stray week caught in its window.
+  const anchor = kind === 'Shift' ? items.filter(i => i.weeksRunning >= 2) : items
+  const startWeek = Math.min(...anchor.map(i => i.startWeek))
+  const lastWeek = Math.max(...items.map(lastFlagged))
+  const weeksRunning = Math.max(...items.map(i => i.weeksRunning))
+  const spanWeeks = lastWeek - startWeek + 1
+  const weeklyGapT = +items.reduce((s, i) => s + i.deltaT, 0).toFixed(1)
+  const totalImpactT = +items.reduce((s, i) => s + i.impactT, 0).toFixed(1)
+  const totalImpactINR = Math.round(items.reduce((s, i) => s + i.impactINR, 0))
+  // Price per tonne implied by each member's own impact figures.
+  const weeklyGapINR = Math.round(items.reduce((s, i) =>
+    s + (i.impactT > 0 ? (i.impactINR / i.impactT) * i.deltaT : 0), 0))
+  const explained = items.find(i => i.linkedSignalId) ?? null
+  const detectedAfterWeeks = Math.min(...items.map(i => i.detectedAfterWeeks))
+
+  let severity: AnomalySeverity, confidence: number, likelyCause: string, suggestedAction: string
+  if (kind === 'Shift') {
+    severity = sustained >= 6 || Math.abs(avgDeltaPct) >= 30 ? 'High' : 'Medium'
+    // A missing cause is a lower ceiling, not a small bonus for having one.
+    // This was `+ 14 if explained` inside a clamp at 95, which the cap swallowed
+    // whole: once a shift was wide enough and had run long enough, one nobody
+    // could explain still displayed 95%.
+    confidence = Math.round(clamp(42 + sustained * 5 + weeksRunning * 7, 40, explained ? 95 : 82))
+    likelyCause = explained
+      ? explained.likelyCause
+      : `${products} products moved together for up to ${weeksRunning} weeks. No market signal explains it yet. Check with the ${lead.region} sales team.`
+    suggestedAction = up
+      ? 'Accept it as the new level. The forecast, material needs and buy plan rise to match.'
+      : 'Accept the lower level. The forecast and buying drop, so stock does not pile up.'
+  } else {
+    severity = 'Low'
+    const singles = items.filter(i => i.weeksRunning === 1).length
+    confidence = Math.round(clamp(55 + (singles / products) * 35, 50, 92))
+    likelyCause = products === 1
+      ? `One product, ${lead.weeksRunning === 1 ? 'one week' : `${lead.weeksRunning} weeks`}. Not part of a wider change.`
+      : `Separate weeks spread over ${spanWeeks} weeks, not at the same time. Normal week-to-week variation, not a trend.`
+    suggestedAction = 'Ignore as one-off. These weeks are taken out of what the forecast learns from, so they stop distorting it.'
+  }
+
+  return {
+    id: `AG-${kind === 'Shift' ? 'S' : 'O'}-${key.replace(/\|/g, '-').replace(/\s+/g, '')}`,
+    kind, grade: lead.grade, region: lead.region, direction: lead.direction,
+    severity, status: lead.status,
+    items, products, sustainedProducts: sustained,
+    avgDeltaPct, weeklyGapT, totalImpactT, totalImpactINR, weeklyGapINR,
+    detectedAfterWeeks, detectedAfterDays: detectedAfterWeeks * 7,
+    startWeek, lastWeek, weeksRunning, spanWeeks, confidence,
+    likelyCause,
+    linkedSignalId: kind === 'Shift' ? explained?.linkedSignalId ?? null : null,
+    suggestedAction,
+  }
+}
+
+/**
+ * @param nowWeek the last week with actual sales (today − 1). Defaults to the
+ *                latest flagged week, which is right whenever anything is open.
+ */
+export function groupAnomalies(anomalies: Anomaly[], nowWeek?: number): AnomalyGroup[] {
   const by = new Map<string, Anomaly[]>()
   for (const a of anomalies) {
     const key = `${a.grade}|${a.region}|${a.direction}|${a.status}`
@@ -233,34 +328,20 @@ export function groupAnomalies(anomalies: Anomaly[]): AnomalyGroup[] {
     list.push(a)
     by.set(key, list)
   }
+  const now = nowWeek ?? Math.max(...anomalies.map(lastFlagged))
 
   const out: AnomalyGroup[] = []
   for (const [key, items] of by) {
-    items.sort((x, y) => Math.abs(y.deltaPct) - Math.abs(x.deltaPct))
-    const lead = items[0]
-    // The group is as severe as its worst member, and as quick as its fastest.
-    const severity = items.some(i => i.severity === 'High') ? 'High'
-      : items.some(i => i.severity === 'Medium') ? 'Medium' : 'Low'
-    // Prefer an explanation that names a signal over one that admits it found none.
-    const explained = items.find(i => i.linkedSignalId) ?? lead
-    out.push({
-      id: `AG-${key.replace(/\|/g, '-').replace(/\s+/g, '')}`,
-      grade: lead.grade, region: lead.region, direction: lead.direction,
-      severity, status: lead.status,
-      items, products: items.length,
-      avgDeltaPct: +(items.reduce((s, i) => s + i.deltaPct, 0) / items.length).toFixed(1),
-      totalImpactT: +items.reduce((s, i) => s + i.impactT, 0).toFixed(1),
-      totalImpactINR: Math.round(items.reduce((s, i) => s + i.impactINR, 0)),
-      detectedAfterDays: Math.min(...items.map(i => i.detectedAfterDays)),
-      startWeek: Math.min(...items.map(i => i.startWeek)),
-      weeksRunning: Math.max(...items.map(i => i.weeksRunning)),
-      likelyCause: explained.likelyCause,
-      linkedSignalId: explained.linkedSignalId,
-      suggestedAction: lead.suggestedAction,
-    })
+    const live = items.filter(a => lastFlagged(a) >= now - (SHIFT_LIVE_WEEKS - 1) && a.startWeek >= now - SHIFT_RECENT_WEEKS + 1)
+    const isShift = live.filter(a => a.weeksRunning >= 2).length >= SHIFT_MIN_SUSTAINED
+    const shift = isShift ? live : []
+    const rest = isShift ? items.filter(a => !live.includes(a)) : items
+    if (shift.length) out.push(makeGroup('Shift', key, shift))
+    if (rest.length) out.push(makeGroup('One-off weeks', key, rest))
   }
 
   return out.sort((a, b) =>
+    (a.kind === b.kind ? 0 : a.kind === 'Shift' ? -1 : 1) ||
     SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
     b.products - a.products ||
     Math.abs(b.avgDeltaPct) - Math.abs(a.avgDeltaPct))

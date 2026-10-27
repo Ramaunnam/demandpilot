@@ -122,9 +122,11 @@ describe('one number, one definition', () => {
     expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(items.length)
   })
 
-  it('the anomaly badge counts market shifts, and loses no series', () => {
+  it('the anomaly badge counts real shifts, and loses no series', () => {
     const groups = S.selectAnomalyGroups(r, 'Open')
-    expect(r.kpis.openAnomalies).toBe(groups.length)
+    // One-off weeks are listed but are not each a decision, so the badge
+    // counts shifts only.
+    expect(r.kpis.openAnomalies).toBe(groups.filter(g => g.kind === 'Shift').length)
     // Grouping is presentation, not suppression: every open series is still in
     // exactly one group.
     const inGroups = groups.reduce((s, g) => s + g.products, 0)

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runPlanning, DEFAULT_SETTINGS } from './index'
 import { buildDataset, STORY, weekDate, DEMO_TODAY, REAL_TODAY } from '@/data/generate'
+import { spottedText } from './insights'
 
 const DAY = 86_400_000
 
@@ -56,10 +57,13 @@ describe('full planning run', () => {
       a.startWeek >= STORY.anomalyStartWeek - 1 && a.deltaPct > 0)
     console.log(`\n  South 316L anomalies found: ${story.length}`)
     if (story.length) {
-      console.log(`  largest: ${story[0].skuCode} ${story[0].deltaPct}% caught after ${story[0].detectedAfterDays} days`)
+      console.log(`  largest: ${story[0].skuCode} ${story[0].deltaPct}% spotted ${spottedText(story[0].detectedAfterWeeks)}`)
     }
     expect(story.length).toBeGreaterThan(0)
-    expect(Math.min(...story.map(a => a.detectedAfterDays))).toBeLessThanOrEqual(14)
+    // Weekly data, so detection is a whole number of weeks. Two is the limit:
+    // past that the old three-month average would have caught it too.
+    expect(Math.min(...story.map(a => a.detectedAfterWeeks))).toBeLessThanOrEqual(2)
+    for (const a of story) expect(a.detectedAfterDays).toBe(a.detectedAfterWeeks * 7)
   })
 
   it('puts the molybdenum position under pressure', () => {

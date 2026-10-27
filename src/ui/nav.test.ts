@@ -13,21 +13,21 @@ import { TOUR } from './Tour'
 /** Every path App.tsx actually serves. */
 const ROUTES = [
   '/', '/exceptions', '/forecast', '/signals', '/anomalies',
-  '/stock', '/plan', '/buy', '/orders', '/simulate', '/proof', '/setup',
+  '/stock', '/plan', '/buy', '/orders', '/simulate', '/connected', '/proof', '/setup',
   '/models',  // redirect only
 ]
 
 const items = NAV.flatMap(g => g.items)
 
 describe('the sidebar', () => {
-  it('lists the eleven working screens, in order', () => {
+  it('lists the twelve working screens, in order', () => {
     expect(NAV.map(g => g.group)).toEqual(['Overview', 'Demand', 'Supply', 'Buy', 'Decide'])
     expect(items.map(i => i.label)).toEqual([
       'Health', 'Exceptions',
       'Forecast', 'Signals', 'Anomalies',
       'Stock', 'Plan & MRP',
       'Recommendations', 'Orders',
-      'Simulate', 'Proof',
+      'Simulate', 'Connected systems', 'Proof',
     ])
   })
 
@@ -43,7 +43,7 @@ describe('the sidebar', () => {
   })
 
   it('fits without scrolling', () => {
-    // Eleven items plus five group labels is what the rail was measured for.
+    // Twelve items plus five group labels is what the rail was measured for.
     expect(items.length).toBeLessThanOrEqual(12)
   })
 })

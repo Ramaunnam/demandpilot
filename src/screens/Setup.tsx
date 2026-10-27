@@ -1,37 +1,30 @@
 import React, { useMemo, useState } from 'react'
-import { RotateCcw, Upload, Download, Mail, MessageSquare, Bell } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { RotateCcw, Upload, Download, Mail, MessageSquare, Bell, FileText } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import { Head, Tile, Tiles, Panel, Chip, Status, Tabs, Field, Why, LV, LVRow, Empty } from '@/ui/kit'
 import { Chart, Forecast as FChart } from '@/ui/charts'
 import { Table, type Col } from '@/ui/Table'
 import { parseCSV, downloadText } from '@/lib/csv'
 import { forecastSeries, spreadsheetMethod } from '@/engine/forecast'
-import { fmtINR, fmtNum, fmtPct, fmtSigned } from '@/lib/format'
+import { fmtINR, fmtNum, fmtPct, fmtSigned, fmtBytes } from '@/lib/format'
 import { GLOSSARY_ENTRIES } from '@/content/glossary'
+import { ALERT_RULES } from '@/content/alerts'
 import { DEFAULT_SETTINGS } from '@/engine'
 import type { Sku, Material, Supplier } from '@/data/types'
 
-const RULES = [
-  { n: 'Cover critical', t: 'Cover < 3 days', c: ['Email', 'SMS', 'In-app'], who: 'Planner, Buyer', f: 'Immediate', s: 'Critical' },
-  { n: 'Cover low', t: 'Cover 3–7 days', c: ['Email', 'In-app'], who: 'Planner', f: 'Daily digest', s: 'High' },
-  { n: 'Cover watch', t: 'Cover 7–14 days', c: ['In-app'], who: 'Planner', f: 'Weekly digest', s: 'Medium' },
-  { n: 'Order-by passed', t: 'Usual supplier can no longer make the date', c: ['Email', 'SMS'], who: 'Planner, Buyer', f: 'Immediate', s: 'Critical' },
-  { n: 'High anomaly', t: 'Demand anomaly rated High', c: ['Email', 'In-app'], who: 'Planner, Sales', f: 'Immediate', s: 'High' },
-  { n: 'Accuracy slipping', t: 'A product moves to "Getting worse"', c: ['Email'], who: 'Planner', f: 'Weekly', s: 'Medium' },
-  { n: 'Over capacity', t: 'Plan exceeds a line in any week', c: ['Email', 'In-app'], who: 'Planner, Production', f: 'Daily', s: 'High' },
-  { n: 'Excess building', t: 'Cover above the excess target', c: ['In-app'], who: 'Planner, Finance', f: 'Monthly', s: 'Low' },
-  { n: 'Delivery slipped', t: 'Supplier advises a later date', c: ['Email', 'In-app'], who: 'Buyer', f: 'Immediate', s: 'High' },
-  { n: 'Shelf life', t: 'Stock expires within 30 days', c: ['Email', 'In-app'], who: 'Warehouse', f: 'Weekly', s: 'Medium' },
-  { n: 'Sole source', t: 'Critical material with no alternative', c: ['Email'], who: 'Buyer', f: 'Monthly', s: 'Medium' },
-  { n: 'Price moved', t: 'A commodity index moves over 8% in six weeks', c: ['Email'], who: 'Buyer, Finance', f: 'On occurrence', s: 'Medium' },
-]
 const CH: Record<string, React.ElementType> = { Email: Mail, SMS: MessageSquare, 'In-app': Bell }
 
 export default function Setup() {
-  const { settings, setSetting, resetSettings, result, ds, loading, role, toast } = useStore()
+  const { settings, setSetting, resetSettings, result, ds, loading, role, toast, uploads, addUpload, removeUpload } = useStore()
   const r = result
-  const [tab, setTab] = useState('params')
-  const [on, setOn] = useState<string[]>(RULES.map(x => x.n))
+  // Read from the URL so a link can land on a tab. The "Alert rules" button on
+  // Connected systems pointed at /setup and dropped you on Parameters, which is
+  // not where the alert rules are.
+  const [params, setParams] = useSearchParams()
+  const tab = params.get('tab') ?? 'params'
+  const setTab = (id: string) => setParams(id === 'params' ? {} : { tab: id }, { replace: true })
+  const [on, setOn] = useState<string[]>(ALERT_RULES.map(x => x.id))
   const [dtab, setDtab] = useState('skus')
   const [up, setUp] = useState<{ name: string; series: { key: string; values: number[] }[] } | null>(null)
   const [pick, setPick] = useState(0)
@@ -50,13 +43,56 @@ export default function Setup() {
   )
 
   // ---- upload -------------------------------------------------------------
+  /**
+   * Any file is accepted. Only a tabular one can become demand history: a
+   * photo of a delivery note or a supplier's PDF quote is evidence attached to
+   * the feed, and saying otherwise would be the screen claiming the forecast
+   * had moved when it had not.
+   *
+   * Detection is on extension first and the browser's MIME type second,
+   * because Windows frequently reports a .csv as `application/vnd.ms-excel`
+   * and an exported .txt as nothing at all.
+   */
+  const TABULAR = /\.(csv|tsv|txt)$/i
+  const isTabular = (f: File) =>
+    TABULAR.test(f.name) || /^text\/(csv|plain|tab-separated-values)$/.test(f.type)
+
+  const kindOf = (f: File): string => {
+    const t = f.type || ''
+    if (isTabular(f)) return 'Data'
+    if (t.startsWith('image/')) return 'Image'
+    if (t.startsWith('video/')) return 'Video'
+    if (t.startsWith('audio/')) return 'Audio'
+    if (t === 'application/pdf' || /\.pdf$/i.test(f.name)) return 'PDF'
+    if (/\.(xlsx|xls|ods)$/i.test(f.name)) return 'Spreadsheet'
+    if (/\.(docx?|odt|rtf)$/i.test(f.name)) return 'Document'
+    if (/\.(zip|7z|rar|tar|gz)$/i.test(f.name)) return 'Archive'
+    return 'File'
+  }
+
   const handle = async (f: File) => {
+    if (!isTabular(f)) {
+      const kind = kindOf(f)
+      addUpload({
+        name: f.name, mime: f.type, sizeBytes: f.size, parsed: false, seriesCount: 0,
+        note: `${kind} attached to the Manual upload feed. It is kept as evidence — only a CSV, TSV or text file can be read as demand history.`,
+      })
+      toast(`${f.name} attached. ${kind}s are kept with the feed but do not change the forecast.`, 'info')
+      return
+    }
     const { headers, rows } = parseCSV(await f.text())
     const sk = headers.find(h => /sku|product|item|code/i.test(h))
     const qt = headers.find(h => /qty|quantity|volume|sales|tonnes|demand/i.test(h))
     const rg = headers.find(h => /region|area|zone/i.test(h))
     const wk = headers.find(h => /week|period|date/i.test(h))
-    if (!sk || !qt) { toast('Need a product column and a quantity column.', 'risk'); return }
+    if (!sk || !qt) {
+      addUpload({
+        name: f.name, mime: f.type, sizeBytes: f.size, parsed: false, seriesCount: 0,
+        note: 'Read as a table, but no product column and quantity column were found. Attached anyway.',
+      })
+      toast('Need a product column and a quantity column.', 'risk')
+      return
+    }
     const g = new Map<string, { w: number; v: number }[]>()
     rows.forEach((row, i) => {
       const key = rg ? `${row[sk]} · ${row[rg]}` : row[sk]
@@ -68,6 +104,10 @@ export default function Setup() {
     const series = [...g.entries()].map(([key, p]) => ({ key, values: p.sort((a, b) => a.w - b.w).map(x => x.v) }))
       .filter(s => s.values.length >= 8).sort((a, b) => b.values.length - a.values.length).slice(0, 40)
     setUp({ name: f.name, series }); setPick(0)
+    addUpload({
+      name: f.name, mime: f.type, sizeBytes: f.size, parsed: series.length > 0, seriesCount: series.length,
+      note: series.length ? 'Read as demand history and fitted below.' : 'Read as a table, but no series had the eight periods a fit needs.',
+    })
     toast(`${series.length} series found in ${f.name}.`, series.length ? 'good' : 'warn')
   }
   const cur = up?.series[pick]
@@ -204,18 +244,19 @@ export default function Setup() {
               <thead><tr><th className="th">On</th><th className="th">Rule</th><th className="th">Trigger</th>
                 <th className="th">Severity</th><th className="th">Channels</th><th className="th">Who</th><th className="th">When</th></tr></thead>
               <tbody>
-                {RULES.map(x => (
-                  <tr key={x.n} className={on.includes(x.n) ? '' : 'opacity-45'}>
-                    <td className="td"><input type="checkbox" className="w-3.5 h-3.5" checked={on.includes(x.n)}
-                      onChange={() => setOn(s => s.includes(x.n) ? s.filter(y => y !== x.n) : [...s, x.n])} /></td>
-                    <td className="td text-base font-medium">{x.n}</td>
-                    <td className="td text-2xs text-muted">{x.t}</td>
-                    <td className="td"><Status v={x.s} /></td>
-                    <td className="td"><div className="flex gap-0.5">{x.c.map(c => { const I = CH[c]; return (
+                {ALERT_RULES.map(x => (
+                  <tr key={x.id} id={`rule-${x.id}`} className={on.includes(x.id) ? '' : 'opacity-45'}>
+                    <td className="td"><input type="checkbox" className="w-3.5 h-3.5" checked={on.includes(x.id)}
+                      aria-label={x.name}
+                      onChange={() => setOn(s => s.includes(x.id) ? s.filter(y => y !== x.id) : [...s, x.id])} /></td>
+                    <td className="td text-base font-medium">{x.name}</td>
+                    <td className="td text-2xs text-muted">{x.trigger}</td>
+                    <td className="td"><Status v={x.severity} /></td>
+                    <td className="td"><div className="flex gap-0.5">{x.channels.map(c => { const I = CH[c]; return (
                       <span key={c} title={c} className="w-5 h-5 rounded bg-surface2 grid place-items-center text-muted"><I className="w-3 h-3" /></span>
                     )})}</div></td>
                     <td className="td text-2xs">{x.who}</td>
-                    <td className="td text-2xs">{x.f}</td>
+                    <td className="td text-2xs">{x.frequency}</td>
                   </tr>
                 ))}
               </tbody>
@@ -274,13 +315,21 @@ export default function Setup() {
 
       {tab === 'upload' && (
         <div className="grid gap-3 lg:grid-cols-3">
-          <Panel className="lg:col-span-2" title="Upload a CSV">
+          <Panel className="lg:col-span-2" title="Upload a file">
             <label className="block border-2 border-dashed border-line rounded-xl p-6 text-center cursor-pointer hover:border-primary/50 transition-colors">
-              <input type="file" accept=".csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handle(f) }} />
+              <input type="file" multiple className="hidden"
+                onChange={e => { for (const f of Array.from(e.target.files ?? [])) handle(f); e.target.value = '' }} />
               <Upload className="w-6 h-6 mx-auto text-muted mb-1.5" />
-              <p className="text-base font-semibold">Choose a file</p>
-              <p className="text-2xs text-muted mt-0.5">Read in your browser · nothing is uploaded</p>
+              <p className="text-base font-semibold">Choose files</p>
+              <p className="text-2xs text-muted mt-0.5">
+                Any type · read in your browser · nothing leaves this machine
+              </p>
             </label>
+            <p className="text-2xs text-muted mt-2">
+              <b>CSV, TSV and text</b> are read as demand history and the models are fitted on them.
+              Anything else — a PDF quote, a photo of a delivery note, a video from the line — is attached
+              to the feed as evidence. It is kept with the upload, but it does not move the forecast.
+            </p>
             {up && (
               <div className="mt-2.5">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -292,6 +341,34 @@ export default function Setup() {
                     {up.series.map((s, i) => <option key={s.key} value={i}>{s.key} — {s.values.length} periods</option>)}
                   </select>
                 )}
+              </div>
+            )}
+
+            {uploads.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-line">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="eyebrow">Files on this feed</span>
+                  <span className="num text-2xs text-muted">
+                    {uploads.filter(u => u.parsed).length} read as data · {uploads.filter(u => !u.parsed).length} attached
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {uploads.map(u => (
+                    <div key={u.id} className="flex items-center gap-2 rounded-lg border border-line bg-surface2 px-2.5 py-1.5">
+                      <FileText className="w-3.5 h-3.5 text-muted shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-base font-medium truncate">{u.name}</div>
+                        <div className="text-2xs text-muted truncate">{u.note}</div>
+                      </div>
+                      <span className="num text-2xs text-muted shrink-0">{fmtBytes(u.sizeBytes)}</span>
+                      <Chip tone={u.parsed ? 'success' : 'neutral'}>
+                        {u.parsed ? `${u.seriesCount} series` : 'Attached'}
+                      </Chip>
+                      <button className="btn btn-ghost btn-xs" aria-label={`Remove ${u.name}`}
+                        onClick={() => removeUpload(u.id)}>×</button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </Panel>

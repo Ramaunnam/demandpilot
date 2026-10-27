@@ -151,6 +151,14 @@ export function fmtDue(days: number): string {
   return `in ${d}d`
 }
 
+/** File size, for the upload list. Binary units, because that is what a file manager shows. */
+export function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
 export function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n))
 }

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { spottedText } from '@/engine/insights'
 import {
   Newspaper, LineChart, UserRound, Factory, Truck, Scale, Search, ArrowRight,
 } from 'lucide-react'
@@ -319,7 +320,7 @@ export default function Signals() {
                         <span className={`num text-sm ml-auto font-semibold ${a.deltaPct > 0 ? 'text-success' : 'text-danger'}`}>
                           {fmtSigned(a.deltaPct)}
                         </span>
-                        <span className="num text-2xs text-muted">in {a.detectedAfterDays}d</span>
+                        <span className="num text-2xs text-muted">spotted {spottedText(a.detectedAfterWeeks)}</span>
                       </Link>
                     ))}
                   </div>
